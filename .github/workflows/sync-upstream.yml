@@ -1,0 +1,22 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: '0 0 * * *'          # 每天 UTC 00:00 执行（北京时间早上8点）
+  workflow_dispatch:             # 允许手动触发
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sync upstream
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3
+        with:
+          target: main                           # ← 你要更新的分支
+          upstream: openclaw/openclaw                    # ← 改成上游仓库，例如：torvalds/linux
+          upstream_branch: main                  # ← 上游分支，通常是 main 或 master
+          token: ${{ secrets.GITHUB_TOKEN }}     # 通常不用改
