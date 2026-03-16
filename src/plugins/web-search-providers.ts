@@ -15,6 +15,7 @@ const BUNDLED_WEB_SEARCH_ALLOWLIST_COMPAT_PLUGIN_IDS = [
   "google",
   "moonshot",
   "perplexity",
+  "searxng",
   "xai",
 ] as const;
 
