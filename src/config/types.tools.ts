@@ -444,6 +444,14 @@ export type MemorySearchConfig = {
   };
 };
 
+type WebSearchLegacyProviderConfig = {
+  apiKey?: SecretInput;
+  baseUrl?: string;
+  model?: string;
+  mode?: string;
+  inlineCitations?: boolean;
+};
+
 export type ToolsConfig = {
   /** Base tool profile applied before allow/deny lists. */
   profile?: ToolProfileId;
@@ -457,9 +465,9 @@ export type ToolsConfig = {
     search?: {
       /** Enable web search tool (default: true when API key is present). */
       enabled?: boolean;
-      /** Search provider ("brave", "firecrawl", "gemini", "grok", "kimi", "perplexity", or "searxng"). */
-      provider?: "brave" | "firecrawl" | "gemini" | "grok" | "kimi" | "perplexity" | "searxng";
-      /** Brave Search API key (optional; defaults to BRAVE_API_KEY env var). */
+      /** Search provider id. */
+      provider?: string;
+      /** Shared API key slot used by providers that do not need nested config. */
       apiKey?: SecretInput;
       /** Default search results count (1-10). */
       maxResults?: number;
@@ -518,7 +526,7 @@ export type ToolsConfig = {
         /** Base URL for SearXNG instance (defaults to SEARXNG_BASE_URL env var or http://localhost:8888). */
         baseUrl?: string;
       };
-    };
+    } & Record<string, unknown>;
     fetch?: {
       /** Enable web fetch tool (default: true). */
       enabled?: boolean;
