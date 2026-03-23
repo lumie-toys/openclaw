@@ -409,6 +409,44 @@ export function registerControlUiAndPairingSuite(): void {
     }
   });
 
+  test("preserves operator scopes for remote control ui when device auth is explicitly disabled", async () => {
+    testState.gatewayControlUi = {
+      allowInsecureAuth: true,
+      dangerouslyDisableDeviceAuth: true,
+      allowedOrigins: ["https://openclaw.example"],
+    };
+    testState.gatewayAuth = { mode: "token", token: "secret" };
+    const prevToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+    process.env.OPENCLAW_GATEWAY_TOKEN = "secret";
+    try {
+      await withGatewayServer(async ({ port }) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${port}`, {
+          headers: {
+            origin: "https://openclaw.example",
+            "x-forwarded-for": "203.0.113.10",
+          },
+        });
+        await new Promise<void>((resolve) => ws.once("open", resolve));
+        const res = await connectReq(ws, {
+          token: "secret",
+          scopes: ["operator.read", "operator.write", "operator.admin", "operator.pairing"],
+          device: null,
+          client: {
+            ...CONTROL_UI_CLIENT,
+          },
+        });
+        expect(res.ok).toBe(true);
+        const status = await rpcReq(ws, "status");
+        expect(status.ok).toBe(true);
+        const admin = await rpcReq(ws, "set-heartbeats", { enabled: false });
+        expect(admin.ok).toBe(true);
+        ws.close();
+      });
+    } finally {
+      restoreGatewayToken(prevToken);
+    }
+  });
+
   test("device token auth matrix", async () => {
     const { server, ws, port, prevToken } = await startServerWithClient("secret");
     const { deviceToken, deviceIdentityPath } = await ensurePairedDeviceTokenForCurrentIdentity(ws);

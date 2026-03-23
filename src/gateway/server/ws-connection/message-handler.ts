@@ -520,11 +520,12 @@ export function attachGatewayWsMessageHandler(params: {
             authOk,
             authMethod,
           });
-          const preserveInsecureLocalControlUiScopes =
+          const preserveControlUiBypassScopes =
             isControlUi &&
-            controlUiAuthPolicy.allowInsecureAuthConfigured &&
-            isLocalClient &&
-            (authMethod === "token" || authMethod === "password");
+            (controlUiAuthPolicy.allowBypass ||
+              (controlUiAuthPolicy.allowInsecureAuthConfigured &&
+                isLocalClient &&
+                (authMethod === "token" || authMethod === "password")));
           const decision = evaluateMissingDeviceIdentity({
             hasDeviceIdentity: Boolean(device),
             role,
@@ -542,7 +543,7 @@ export function attachGatewayWsMessageHandler(params: {
           if (
             !device &&
             (decision.kind !== "allow" ||
-              (!preserveInsecureLocalControlUiScopes &&
+              (!preserveControlUiBypassScopes &&
                 (authMethod === "token" || authMethod === "password" || trustedProxyAuthOk)))
           ) {
             clearUnboundScopes();
