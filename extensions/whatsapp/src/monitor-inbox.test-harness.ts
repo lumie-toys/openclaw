@@ -118,16 +118,20 @@ vi.mock("openclaw/plugin-sdk/security-runtime", async (importOriginal) => {
   };
 });
 
-vi.mock("./session.js", () => ({
-  createWaSocket: vi.fn().mockImplementation(async () => {
-    if (!sessionState.sock) {
-      throw new Error("mock WhatsApp socket not initialized");
-    }
-    return sessionState.sock;
-  }),
-  waitForWaConnection: vi.fn().mockResolvedValue(undefined),
-  getStatusCode: vi.fn(() => 500),
-}));
+vi.mock("./session.js", async () => {
+  const actual = await vi.importActual<typeof import("./session.js")>("./session.js");
+  return {
+    ...actual,
+    createWaSocket: vi.fn().mockImplementation(async () => {
+      if (!sessionState.sock) {
+        throw new Error("mock WhatsApp socket not initialized");
+      }
+      return sessionState.sock;
+    }),
+    waitForWaConnection: vi.fn().mockResolvedValue(undefined),
+    getStatusCode: vi.fn(() => 500),
+  };
+});
 
 export function getSock(): MockSock {
   if (!sessionState.sock) {
@@ -149,7 +153,8 @@ export async function waitForMessageCalls(onMessage: ReturnType<typeof vi.fn>, c
     () => {
       expect(onMessage).toHaveBeenCalledTimes(count);
     },
-    { timeout: 2_000, interval: 5 },
+    // Channel-suite workers can be saturated under no-isolate CI runs.
+    { timeout: 5_000, interval: 5 },
   );
 }
 
@@ -215,6 +220,7 @@ export function installWebMonitorInboxUnitTestHooks(opts?: { authDir?: boolean }
   const createAuthDir = opts?.authDir ?? true;
 
   beforeEach(async () => {
+    vi.useRealTimers();
     vi.resetModules();
     vi.clearAllMocks();
     sessionState.sock = createMockSock();
