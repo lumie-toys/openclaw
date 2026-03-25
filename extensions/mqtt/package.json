@@ -1,0 +1,16 @@
+{
+  "name": "@openclaw/mqtt-plugin",
+  "version": "2026.3.25",
+  "private": true,
+  "description": "OpenClaw MQTT plugin",
+  "type": "module",
+  "dependencies": {
+    "@sinclair/typebox": "0.34.48",
+    "mqtt": "5.15.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

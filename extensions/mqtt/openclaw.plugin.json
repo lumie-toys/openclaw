@@ -1,0 +1,67 @@
+{
+  "id": "mqtt",
+  "skills": ["./skills"],
+  "uiHints": {
+    "brokerUrl": {
+      "label": "MQTT Broker URL",
+      "help": "MQTT broker endpoint, for example mqtt://emqx:1883"
+    },
+    "username": {
+      "label": "MQTT Username",
+      "help": "Username for MQTT broker authentication."
+    },
+    "password": {
+      "label": "MQTT Password",
+      "help": "Password for MQTT broker authentication.",
+      "sensitive": true
+    },
+    "clientId": {
+      "label": "MQTT Client ID",
+      "help": "Client ID used when connecting to broker."
+    },
+    "subscribeTopics": {
+      "label": "MQTT Subscribe Topics",
+      "help": "Topic list to subscribe on startup."
+    },
+    "qos": {
+      "label": "MQTT Default QoS",
+      "help": "Default publish/subscribe QoS level (0, 1, or 2)."
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      },
+      "brokerUrl": {
+        "type": "string"
+      },
+      "username": {
+        "type": "string"
+      },
+      "password": {
+        "type": [
+          "string",
+          "object"
+        ]
+      },
+      "clientId": {
+        "type": "string"
+      },
+      "subscribeTopics": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "qos": {
+        "type": "number"
+      },
+      "maxBufferedMessages": {
+        "type": "number"
+      }
+    }
+  }
+}
