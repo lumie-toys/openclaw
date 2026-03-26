@@ -33,8 +33,8 @@ describe("ws connect policy", () => {
         nonce: "nonce-2",
       },
     });
-    expect(regular.allowBypass).toBe(false);
-    expect(regular.device?.id).toBe("dev-2");
+    expect(regular.allowBypass).toBe(true);
+    expect(regular.device).toBeNull();
   });
 
   test("evaluates missing-device decisions", () => {
@@ -209,7 +209,7 @@ describe("ws connect policy", () => {
     ).toBe("reject-device-required");
   });
 
-  test("dangerouslyDisableDeviceAuth skips pairing for operator control-ui only", () => {
+  test("dangerouslyDisableDeviceAuth skips pairing for operator clients", () => {
     const bypass = resolveControlUiAuthPolicy({
       isControlUi: true,
       controlUiConfig: { dangerouslyDisableDeviceAuth: true },
@@ -220,7 +220,13 @@ describe("ws connect policy", () => {
       controlUiConfig: undefined,
       deviceRaw: null,
     });
+    const nonControlUiBypass = resolveControlUiAuthPolicy({
+      isControlUi: false,
+      controlUiConfig: { dangerouslyDisableDeviceAuth: true },
+      deviceRaw: null,
+    });
     expect(shouldSkipControlUiPairing(bypass, "operator", false)).toBe(true);
+    expect(shouldSkipControlUiPairing(nonControlUiBypass, "operator", false)).toBe(true);
     expect(shouldSkipControlUiPairing(bypass, "node", false)).toBe(false);
     expect(shouldSkipControlUiPairing(strict, "operator", false)).toBe(false);
     expect(shouldSkipControlUiPairing(strict, "operator", true)).toBe(true);

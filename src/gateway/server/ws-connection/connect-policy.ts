@@ -22,8 +22,10 @@ export function resolveControlUiAuthPolicy(params: {
 }): ControlUiAuthPolicy {
   const allowInsecureAuthConfigured =
     params.isControlUi && params.controlUiConfig?.allowInsecureAuth === true;
-  const dangerouslyDisableDeviceAuth =
-    params.isControlUi && params.controlUiConfig?.dangerouslyDisableDeviceAuth === true;
+  // Deployment wrapper behavior: when this break-glass flag is enabled we apply
+  // the bypass to operator gateway clients beyond the Control UI path. This keeps
+  // cloud/headless websocket automation from being blocked by interactive pairing.
+  const dangerouslyDisableDeviceAuth = params.controlUiConfig?.dangerouslyDisableDeviceAuth === true;
   return {
     isControlUi: params.isControlUi,
     allowInsecureAuthConfigured,
