@@ -522,11 +522,11 @@ export function attachGatewayWsMessageHandler(params: {
             authMethod,
           });
           const preserveControlUiBypassScopes =
-            isControlUi &&
-            (controlUiAuthPolicy.allowBypass ||
-              (controlUiAuthPolicy.allowInsecureAuthConfigured &&
-                isLocalClient &&
-                (authMethod === "token" || authMethod === "password")));
+            controlUiAuthPolicy.allowBypass ||
+            (isControlUi &&
+              controlUiAuthPolicy.allowInsecureAuthConfigured &&
+              isLocalClient &&
+              (authMethod === "token" || authMethod === "password"));
           const decision = evaluateMissingDeviceIdentity({
             hasDeviceIdentity: Boolean(device),
             role,
