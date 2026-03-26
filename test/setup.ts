@@ -240,6 +240,7 @@ const createTestRegistry = (channels: TestChannelRegistration[] = []): PluginReg
   speechProviders: [],
   mediaUnderstandingProviders: [],
   imageGenerationProviders: [],
+  videoGenerationProviders: [],
   webSearchProviders: [],
   gatewayHandlers: {},
   httpRoutes: [],
