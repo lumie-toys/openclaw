@@ -1,5 +1,8 @@
 {
   "id": "searxng",
+  "contracts": {
+    "webSearchProviders": ["searxng"]
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
