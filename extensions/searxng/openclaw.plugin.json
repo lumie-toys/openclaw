@@ -1,5 +1,19 @@
 {
   "id": "searxng",
+  "uiHints": {
+    "webSearch.baseUrl": {
+      "label": "SearXNG Base URL",
+      "help": "Base URL of your SearXNG instance, such as http://localhost:8080 or https://search.example.com/searxng."
+    },
+    "webSearch.categories": {
+      "label": "SearXNG Categories",
+      "help": "Optional comma-separated categories such as general, news, or science."
+    },
+    "webSearch.language": {
+      "label": "SearXNG Language",
+      "help": "Optional language code for results such as en, de, or fr."
+    }
+  },
   "contracts": {
     "webSearchProviders": ["searxng"]
   },
@@ -7,22 +21,6 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "baseUrl": {
-        "type": ["string", "object"]
-      },
-      "engines": {
-        "type": "string"
-      },
-      "categories": {
-        "type": "string"
-      },
-      "language": {
-        "type": "string"
-      },
-      "time_range": {
-        "type": "string",
-        "enum": ["day", "month", "year"]
-      },
       "webSearch": {
         "type": "object",
         "additionalProperties": false,
@@ -30,18 +28,11 @@
           "baseUrl": {
             "type": ["string", "object"]
           },
-          "engines": {
-            "type": "string"
-          },
           "categories": {
             "type": "string"
           },
           "language": {
             "type": "string"
-          },
-          "time_range": {
-            "type": "string",
-            "enum": ["day", "month", "year"]
           }
         }
       }

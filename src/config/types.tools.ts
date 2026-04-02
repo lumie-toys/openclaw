@@ -549,11 +549,6 @@ export type ToolsConfig = {
         /** @deprecated Legacy Sonar/OpenRouter field. Ignored by Search API. */
         model?: string;
       };
-      /** SearXNG-specific configuration (used when provider="searxng"). */
-      searxng?: {
-        /** Base URL for SearXNG instance (defaults to SEARXNG_BASE_URL env var or http://localhost:8888). */
-        baseUrl?: string;
-      };
     } & Record<string, unknown>;
     /** X (formerly Twitter) search tool configuration using xAI Grok. */
     x_search?: XSearchToolConfig;
