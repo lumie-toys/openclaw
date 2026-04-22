@@ -15,6 +15,18 @@ DOCKER_HOME_MOUNT=()
 DOCKER_EXTRA_ENV_FILES=()
 DOCKER_AUTH_PRESTAGED=0
 
+openclaw_live_codex_harness_append_build_extension() {
+  local extension="${1:?extension required}"
+  local current="${OPENCLAW_DOCKER_BUILD_EXTENSIONS:-${OPENCLAW_EXTENSIONS:-}}"
+  case " $current " in
+    *" $extension "*)
+      ;;
+    *)
+      export OPENCLAW_DOCKER_BUILD_EXTENSIONS="${current:+$current }$extension"
+      ;;
+  esac
+}
+
 case "$CODEX_HARNESS_AUTH_MODE" in
   codex-auth | api-key)
     ;;
@@ -169,12 +181,14 @@ cd "$tmp_dir"
 pnpm test:live src/gateway/gateway-codex-harness.live.test.ts
 EOF
 
+openclaw_live_codex_harness_append_build_extension codex
 "$ROOT_DIR/scripts/test-live-build-docker.sh"
 
 echo "==> Run Codex harness live test in Docker"
 echo "==> Model: ${OPENCLAW_LIVE_CODEX_HARNESS_MODEL:-codex/gpt-5.4}"
 echo "==> Image probe: ${OPENCLAW_LIVE_CODEX_HARNESS_IMAGE_PROBE:-1}"
 echo "==> MCP probe: ${OPENCLAW_LIVE_CODEX_HARNESS_MCP_PROBE:-1}"
+echo "==> Guardian probe: ${OPENCLAW_LIVE_CODEX_HARNESS_GUARDIAN_PROBE:-1}"
 echo "==> Auth mode: $CODEX_HARNESS_AUTH_MODE"
 echo "==> Harness fallback: none"
 echo "==> Auth files: ${AUTH_FILES_CSV:-none}"
@@ -191,6 +205,7 @@ docker run --rm -t \
   -e OPENCLAW_LIVE_CODEX_HARNESS_AUTH="$CODEX_HARNESS_AUTH_MODE" \
   -e OPENCLAW_LIVE_CODEX_HARNESS=1 \
   -e OPENCLAW_LIVE_CODEX_HARNESS_DEBUG="${OPENCLAW_LIVE_CODEX_HARNESS_DEBUG:-}" \
+  -e OPENCLAW_LIVE_CODEX_HARNESS_GUARDIAN_PROBE="${OPENCLAW_LIVE_CODEX_HARNESS_GUARDIAN_PROBE:-1}" \
   -e OPENCLAW_LIVE_CODEX_HARNESS_IMAGE_PROBE="${OPENCLAW_LIVE_CODEX_HARNESS_IMAGE_PROBE:-1}" \
   -e OPENCLAW_LIVE_CODEX_HARNESS_MCP_PROBE="${OPENCLAW_LIVE_CODEX_HARNESS_MCP_PROBE:-1}" \
   -e OPENCLAW_LIVE_CODEX_HARNESS_MODEL="${OPENCLAW_LIVE_CODEX_HARNESS_MODEL:-codex/gpt-5.4}" \

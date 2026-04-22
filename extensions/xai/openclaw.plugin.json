@@ -85,7 +85,12 @@
   "contracts": {
     "webSearchProviders": ["grok"],
     "videoGenerationProviders": ["xai"],
+    "speechProviders": ["xai"],
+    "imageGenerationProviders": ["xai"],
     "tools": ["code_execution", "x_search"]
+  },
+  "configContracts": {
+    "compatibilityRuntimePaths": ["tools.web.search.apiKey"]
   },
   "configSchema": {
     "type": "object",

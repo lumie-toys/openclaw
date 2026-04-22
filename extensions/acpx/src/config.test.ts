@@ -30,6 +30,17 @@ describe("embedded acpx plugin config", () => {
     expect(resolved.timeoutSeconds).toBe(300);
   });
 
+  it("keeps explicit probeAgent config", () => {
+    const resolved = resolveAcpxPluginConfig({
+      rawConfig: {
+        probeAgent: "claude",
+      },
+      workspaceDir: "/tmp/openclaw-acpx",
+    });
+
+    expect(resolved.probeAgent).toBe("claude");
+  });
+
   it("accepts agent command overrides", () => {
     const resolved = resolveAcpxPluginConfig({
       rawConfig: {
@@ -62,6 +73,21 @@ describe("embedded acpx plugin config", () => {
     expect(server.args?.length).toBeGreaterThan(0);
   });
 
+  it("injects the built-in OpenClaw tools MCP server only when explicitly enabled", () => {
+    const resolved = resolveAcpxPluginConfig({
+      rawConfig: {
+        openClawToolsMcpBridge: true,
+      },
+      workspaceDir: "/tmp/openclaw-acpx",
+    });
+
+    const server = resolved.mcpServers["openclaw-tools"];
+    expect(server).toBeDefined();
+    expect(server.command).toBe(process.execPath);
+    expect(Array.isArray(server.args)).toBe(true);
+    expect(server.args?.length).toBeGreaterThan(0);
+  });
+
   it("keeps the runtime json schema in sync with the manifest config schema", () => {
     const pluginRoot = resolveAcpxPluginRoot();
     const manifest = JSON.parse(
@@ -74,11 +100,13 @@ describe("embedded acpx plugin config", () => {
       properties: expect.objectContaining({
         cwd: expect.any(Object),
         stateDir: expect.any(Object),
+        probeAgent: expect.any(Object),
         timeoutSeconds: expect.objectContaining({
           default: 120,
         }),
         agents: expect.any(Object),
         mcpServers: expect.any(Object),
+        openClawToolsMcpBridge: expect.any(Object),
       }),
     });
   });
