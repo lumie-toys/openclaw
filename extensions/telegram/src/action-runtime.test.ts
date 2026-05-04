@@ -1,5 +1,5 @@
-import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
-import { captureEnv } from "openclaw/plugin-sdk/testing";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-types";
+import { captureEnv } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleTelegramAction, telegramActionRuntime } from "./action-runtime.js";
 
@@ -850,6 +850,26 @@ describe("handleTelegramAction", () => {
       cfg,
     );
     expect(sendMessageTelegram).toHaveBeenCalled();
+  });
+
+  it("uses interactive button labels as fallback text when message text is omitted", async () => {
+    await handleTelegramAction(
+      {
+        action: "sendMessage",
+        to: "@testchannel",
+        interactive: {
+          blocks: [{ type: "buttons", buttons: [{ label: "Retry", value: "cmd:retry" }] }],
+        },
+      },
+      telegramConfig({ capabilities: { inlineButtons: "all" } }),
+    );
+    expect(sendMessageTelegram).toHaveBeenCalledWith(
+      "@testchannel",
+      "- Retry",
+      expect.objectContaining({
+        buttons: [[{ text: "Retry", callback_data: "cmd:retry" }]],
+      }),
+    );
   });
 
   it.each([

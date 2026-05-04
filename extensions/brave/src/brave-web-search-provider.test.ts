@@ -1,6 +1,6 @@
 import fs from "node:fs";
+import { validateJsonSchemaValue } from "openclaw/plugin-sdk/config-schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { validateJsonSchemaValue } from "../../../src/plugins/schema-validator.js";
 import { __testing } from "../test-api.js";
 import { createBraveWebSearchProvider } from "./brave-web-search-provider.js";
 
@@ -16,6 +16,22 @@ describe("brave web search provider", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     global.fetch = priorFetch;
+  });
+
+  it("points missing-key users to fetch/browser alternatives", async () => {
+    vi.stubEnv("BRAVE_API_KEY", "");
+    const provider = createBraveWebSearchProvider();
+    const tool = provider.createTool({ config: {}, searchConfig: {} });
+    if (!tool) {
+      throw new Error("Expected tool definition");
+    }
+
+    const result = await tool.execute({ query: "OpenClaw docs" });
+
+    expect(result).toMatchObject({
+      error: "missing_brave_api_key",
+      message: expect.stringContaining("use web_fetch for a specific URL or the browser tool"),
+    });
   });
 
   it("normalizes brave language parameters and swaps reversed ui/search inputs", () => {

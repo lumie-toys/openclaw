@@ -1,4 +1,8 @@
 import {
+  createProviderHttpError,
+  formatProviderHttpErrorMessage,
+} from "openclaw/plugin-sdk/provider-http";
+import {
   buildSearchCacheKey,
   buildUnsupportedSearchFilterResponse,
   DEFAULT_SEARCH_COUNT,
@@ -16,14 +20,12 @@ import {
   wrapWebContent,
   writeCachedSearchPayload,
 } from "openclaw/plugin-sdk/provider-web-search";
-import { DEFAULT_GOOGLE_API_BASE_URL } from "../api.js";
 import {
   resolveGeminiConfig,
+  resolveGeminiBaseUrl,
   resolveGeminiModel,
   type GeminiConfig,
 } from "./gemini-web-search-provider.shared.js";
-
-const GEMINI_API_BASE = DEFAULT_GOOGLE_API_BASE_URL;
 
 type GeminiGroundingResponse = {
   candidates?: Array<{
@@ -58,10 +60,11 @@ export function resolveGeminiRuntimeApiKey(gemini?: GeminiConfig): string | unde
 async function runGeminiSearch(params: {
   query: string;
   apiKey: string;
+  baseUrl: string;
   model: string;
   timeoutSeconds: number;
 }): Promise<{ content: string; citations: Array<{ url: string; title?: string }> }> {
-  const endpoint = `${GEMINI_API_BASE}/models/${params.model}:generateContent`;
+  const endpoint = `${params.baseUrl}/models/${params.model}:generateContent`;
 
   return withTrustedWebSearchEndpoint(
     {
@@ -81,11 +84,8 @@ async function runGeminiSearch(params: {
     },
     async (res) => {
       if (!res.ok) {
-        const safeDetail = ((await res.text()) || res.statusText).replace(
-          /key=[^&\s]+/giu,
-          "key=***",
-        );
-        throw new Error(`Gemini API error (${res.status}): ${safeDetail}`);
+        const error = await createProviderHttpError(res, "Gemini API error");
+        throw new Error(error.message.replace(/key=[^&\s]+/giu, "key=***"));
       }
 
       let data: GeminiGroundingResponse;
@@ -99,7 +99,11 @@ async function runGeminiSearch(params: {
       if (data.error) {
         const rawMessage = data.error.message || data.error.status || "unknown";
         throw new Error(
-          `Gemini API error (${data.error.code}): ${rawMessage.replace(/key=[^&\s]+/giu, "key=***")}`,
+          formatProviderHttpErrorMessage({
+            label: "Gemini API error",
+            status: data.error.code ?? 0,
+            detail: rawMessage.replace(/key=[^&\s]+/giu, "key=***"),
+          }),
         );
       }
 
@@ -147,7 +151,7 @@ export async function executeGeminiSearch(
     return {
       error: "missing_gemini_api_key",
       message:
-        "web_search (gemini) needs an API key. Set GEMINI_API_KEY in the Gateway environment, or configure tools.web.search.gemini.apiKey.",
+        "web_search (gemini) needs an API key. Set GEMINI_API_KEY in the Gateway environment, or configure tools.web.search.gemini.apiKey. If you do not want to configure a search API key, use web_fetch for a specific URL or the browser tool for interactive pages.",
       docs: "https://docs.openclaw.ai/tools/web",
     };
   }
@@ -156,10 +160,12 @@ export async function executeGeminiSearch(
   const count =
     readNumberParam(args, "count", { integer: true }) ?? searchConfig?.maxResults ?? undefined;
   const model = resolveGeminiModel(geminiConfig);
+  const baseUrl = resolveGeminiBaseUrl(geminiConfig);
   const cacheKey = buildSearchCacheKey([
     "gemini",
     query,
     resolveSearchCount(count, DEFAULT_SEARCH_COUNT),
+    baseUrl,
     model,
   ]);
   const cached = readCachedSearchPayload(cacheKey);
@@ -171,6 +177,7 @@ export async function executeGeminiSearch(
   const result = await runGeminiSearch({
     query,
     apiKey,
+    baseUrl,
     model,
     timeoutSeconds: resolveSearchTimeoutSeconds(searchConfig),
   });

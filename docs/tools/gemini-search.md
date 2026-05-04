@@ -4,10 +4,8 @@ read_when:
   - You want to use Gemini for web_search
   - You need a GEMINI_API_KEY
   - You want Google Search grounding
-title: "Gemini Search"
+title: "Gemini search"
 ---
-
-# Gemini Search
 
 OpenClaw supports Gemini models with built-in
 [Google Search grounding](https://ai.google.dev/gemini-api/docs/grounding),
@@ -41,6 +39,7 @@ citations.
         config: {
           webSearch: {
             apiKey: "AIza...", // optional if GEMINI_API_KEY is set
+            baseUrl: "https://generativelanguage.googleapis.com/v1beta", // optional proxy/base URL override
             model: "gemini-2.5-flash", // default
           },
         },
@@ -90,6 +89,14 @@ Provider-specific filters like `country`, `language`, `freshness`, and
 The default model is `gemini-2.5-flash` (fast and cost-effective). Any Gemini
 model that supports grounding can be used via
 `plugins.entries.google.config.webSearch.model`.
+
+## Base URL overrides
+
+Set `plugins.entries.google.config.webSearch.baseUrl` when Gemini web search
+must route through an operator proxy or custom Gemini-compatible endpoint. A
+plain `https://generativelanguage.googleapis.com` value is normalized to
+`https://generativelanguage.googleapis.com/v1beta`; custom proxy paths are kept
+as provided after trimming trailing slashes.
 
 ## Related
 

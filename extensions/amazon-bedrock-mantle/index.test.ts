@@ -1,5 +1,5 @@
+import { registerSingleProviderPlugin } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { registerSingleProviderPlugin } from "../../test/helpers/plugins/plugin-registration.js";
 import bedrockMantlePlugin from "./index.js";
 
 describe("amazon-bedrock-mantle provider plugin", () => {
@@ -24,9 +24,9 @@ describe("amazon-bedrock-mantle provider plugin", () => {
     expect(
       provider.classifyFailoverReason?.({ errorMessage: "some other error" } as never),
     ).toBeUndefined();
-    expect(
-      provider.classifyFailoverReason?.({ errorMessage: "overloaded_error" } as never),
-    ).toBe("overloaded");
+    expect(provider.classifyFailoverReason?.({ errorMessage: "overloaded_error" } as never)).toBe(
+      "overloaded",
+    );
   });
 
   it("provides a custom stream only for Mantle Anthropic models", async () => {

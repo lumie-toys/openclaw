@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { formatCliCommand } from "../cli/command-format.js";
 import { resolveStateDir } from "../config/paths.js";
+import { resolveRuntimeServiceVersion } from "../version.js";
 import { writeJsonAtomic } from "./json-files.js";
 
 export type RestartSentinelLog = {
@@ -62,6 +63,9 @@ export type RestartSentinel = {
   payload: RestartSentinelPayload;
 };
 
+export const DEFAULT_RESTART_SUCCESS_CONTINUATION_MESSAGE =
+  "The gateway restart completed successfully. Tell the user OpenClaw restarted successfully and continue any pending work.";
+
 const SENTINEL_FILENAME = "restart-sentinel.json";
 
 export function formatDoctorNonInteractiveHint(
@@ -80,8 +84,92 @@ export async function writeRestartSentinel(
 ) {
   const filePath = resolveRestartSentinelPath(env);
   const data: RestartSentinel = { version: 1, payload };
-  await writeJsonAtomic(filePath, data, { trailingNewline: true });
+  await writeJsonAtomic(filePath, data, { trailingNewline: true, ensureDirMode: 0o700 });
   return filePath;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function cloneRestartSentinelPayload(payload: RestartSentinelPayload): RestartSentinelPayload {
+  return JSON.parse(JSON.stringify(payload)) as RestartSentinelPayload;
+}
+
+export async function rewriteRestartSentinel(
+  rewrite: (payload: RestartSentinelPayload) => RestartSentinelPayload | null,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<RestartSentinel | null> {
+  const current = await readRestartSentinel(env);
+  if (!current) {
+    return null;
+  }
+  const nextPayload = rewrite(cloneRestartSentinelPayload(current.payload));
+  if (!nextPayload) {
+    return null;
+  }
+  await writeRestartSentinel(nextPayload, env);
+  return {
+    version: 1,
+    payload: nextPayload,
+  };
+}
+
+export async function finalizeUpdateRestartSentinelRunningVersion(
+  version = resolveRuntimeServiceVersion(process.env),
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<RestartSentinel | null> {
+  return await rewriteRestartSentinel((payload) => {
+    if (payload.kind !== "update") {
+      return null;
+    }
+    const stats = payload.stats ? { ...payload.stats } : {};
+    const after = isPlainRecord(stats.after) ? { ...stats.after } : {};
+    after.version = version;
+    stats.after = after;
+    return {
+      ...payload,
+      stats,
+    };
+  }, env);
+}
+
+export async function markUpdateRestartSentinelFailure(
+  reason: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<RestartSentinel | null> {
+  return await rewriteRestartSentinel((payload) => {
+    if (payload.kind !== "update") {
+      return null;
+    }
+    const stats = payload.stats ? { ...payload.stats } : {};
+    stats.reason = reason;
+    return {
+      ...payload,
+      status: "error",
+      stats,
+    };
+  }, env);
+}
+
+export async function removeRestartSentinelFile(filePath: string | null | undefined) {
+  if (!filePath) {
+    return;
+  }
+  await fs.unlink(filePath).catch(() => {});
+}
+
+export function buildRestartSuccessContinuation(params: {
+  sessionKey?: string;
+  continuationMessage?: string | null;
+}): RestartSentinelContinuation | null {
+  const message = params.continuationMessage?.trim();
+  if (message) {
+    return { kind: "agentTurn", message };
+  }
+  return params.sessionKey?.trim()
+    ? { kind: "agentTurn", message: DEFAULT_RESTART_SUCCESS_CONTINUATION_MESSAGE }
+    : null;
 }
 
 export async function readRestartSentinel(
@@ -124,7 +212,7 @@ export async function consumeRestartSentinel(
   if (!parsed) {
     return null;
   }
-  await fs.unlink(filePath).catch(() => {});
+  await removeRestartSentinelFile(filePath);
   return parsed;
 }
 

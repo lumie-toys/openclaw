@@ -3,6 +3,11 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, test, vi } from "vitest";
+import {
+  onDiagnosticEvent,
+  resetDiagnosticEventsForTest,
+  type DiagnosticEventPayload,
+} from "../infra/diagnostic-events.js";
 import { defaultVoiceWakeTriggers } from "../infra/voicewake.js";
 import { handleControlUiHttpRequest } from "./control-ui.js";
 import {
@@ -12,6 +17,7 @@ import {
 import type { RequestFrame } from "./protocol/index.js";
 import { createGatewayBroadcaster } from "./server-broadcast.js";
 import { createChatRunRegistry } from "./server-chat.js";
+import { MAX_BUFFERED_BYTES } from "./server-constants.js";
 import { handleNodeInvokeResult } from "./server-methods/nodes.handlers.invoke-result.js";
 import type { GatewayClient as GatewayMethodClient } from "./server-methods/types.js";
 import type { GatewayRequestContext, RespondFn } from "./server-methods/types.js";
@@ -78,6 +84,44 @@ describe("GatewayClient", () => {
 
     expect(last?.url).toBe("ws://127.0.0.1:1");
     expect(last?.opts).toEqual(expect.objectContaining({ maxPayload: 25 * 1024 * 1024 }));
+  });
+
+  test("uses an explicit direct agent for control-plane WebSocket connections", () => {
+    const client = new GatewayClient({ url: "ws://127.0.0.1:1" });
+    client.start();
+    const last = wsMockState.last as { opts: { agent?: unknown } } | null;
+
+    expect(last?.opts.agent).toBeDefined();
+    expect(last?.opts.agent).not.toBe(
+      (global as unknown as { GLOBAL_AGENT?: { HTTP_PROXY?: unknown } }).GLOBAL_AGENT,
+    );
+  });
+
+  test("uses an explicit direct agent for IPv6 loopback control-plane WebSocket connections", () => {
+    const client = new GatewayClient({ url: "ws://[::1]:1" });
+    client.start();
+    const last = wsMockState.last as { opts: { agent?: unknown } } | null;
+
+    expect(last?.opts.agent).toBeDefined();
+  });
+
+  test("uses the direct control-plane bypass for localhost hostnames", () => {
+    const client = new GatewayClient({ url: "ws://localhost:1" });
+    client.start();
+    const last = wsMockState.last as { opts: { agent?: unknown } } | null;
+
+    expect(last?.opts.agent).toBeDefined();
+  });
+
+  test("does not force a direct agent for remote Gateway WebSocket connections", () => {
+    const client = new GatewayClient({
+      url: "wss://gateway.example.com",
+      tlsFingerprint: "SHA256:AA:BB",
+    });
+    client.start();
+    const last = wsMockState.last as { opts: { agent?: unknown } } | null;
+
+    expect(last?.opts.agent).toBeUndefined();
   });
 
   it("returns 404 for missing static asset paths instead of SPA fallback", async () => {
@@ -348,6 +392,7 @@ describe("gateway broadcaster", () => {
     broadcast("cron", { jobId: "job-1" });
     broadcast("talk.mode", { enabled: true });
     broadcast("voicewake.changed", { triggers: ["hello"] });
+    broadcast("voicewake.routing.changed", { config: { routes: [] } });
     broadcast("heartbeat", { ts: 1 });
     broadcast("presence", { presence: [] });
     broadcast("health", { ok: true });
@@ -366,6 +411,7 @@ describe("gateway broadcaster", () => {
     ]);
     expect(nodeSocket.sent.map((frame) => frame.event)).toEqual([
       "voicewake.changed",
+      "voicewake.routing.changed",
       "heartbeat",
       "presence",
       "health",
@@ -376,6 +422,7 @@ describe("gateway broadcaster", () => {
     expect(readSocket.sent.map((frame) => frame.event)).toEqual([
       "cron",
       "voicewake.changed",
+      "voicewake.routing.changed",
       "heartbeat",
       "presence",
       "health",
@@ -387,6 +434,7 @@ describe("gateway broadcaster", () => {
       "cron",
       "talk.mode",
       "voicewake.changed",
+      "voicewake.routing.changed",
       "heartbeat",
       "presence",
       "health",
@@ -398,6 +446,7 @@ describe("gateway broadcaster", () => {
       "cron",
       "talk.mode",
       "voicewake.changed",
+      "voicewake.routing.changed",
       "heartbeat",
       "presence",
       "health",
@@ -470,6 +519,42 @@ describe("gateway broadcaster", () => {
       ["chat", 1],
       ["heartbeat", 2],
     ]);
+  });
+
+  it("records a payload diagnostic when the outbound websocket buffer exceeds the limit", () => {
+    resetDiagnosticEventsForTest();
+    const events: DiagnosticEventPayload[] = [];
+    const stop = onDiagnosticEvent((event) => events.push(event));
+    try {
+      const slowReadSocket = makeRecordingSocket();
+      slowReadSocket.bufferedAmount = MAX_BUFFERED_BYTES + 1;
+      const clients = new Set<GatewayWsClient>([
+        makeGatewayWsClient("c-slow-read", slowReadSocket, {
+          role: "operator",
+          scopes: ["operator.read"],
+        } as GatewayWsClient["connect"]),
+      ]);
+
+      const { broadcast } = createGatewayBroadcaster({ clients });
+
+      broadcast("chat", { sessionKey: "agent:main:main", message: "secret" }, { dropIfSlow: true });
+      broadcast("heartbeat", { ts: 1 });
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "payload.large",
+          surface: "gateway.ws.outbound_buffer",
+          action: "rejected",
+          bytes: MAX_BUFFERED_BYTES + 1,
+          limitBytes: MAX_BUFFERED_BYTES,
+          reason: "ws_send_buffer_drop",
+        }),
+      );
+      expect(events.filter((event) => event.type === "payload.large")).toHaveLength(1);
+    } finally {
+      stop();
+      resetDiagnosticEventsForTest();
+    }
   });
 });
 
@@ -631,6 +716,31 @@ describe("resolveNodeCommandAllowlist", () => {
     expect(DEFAULT_DANGEROUS_NODE_COMMANDS).toContain("screen.record");
     expect(allow.has("screen.snapshot")).toBe(true);
     expect(allow.has("screen.record")).toBe(false);
+  });
+
+  it("allows safe Windows companion commands by default but keeps dangerous media gated", () => {
+    const allow = resolveNodeCommandAllowlist(
+      {},
+      {
+        platform: "Windows_NT",
+        deviceFamily: "Windows",
+      },
+    );
+
+    expect(allow.has("canvas.present")).toBe(true);
+    expect(allow.has("canvas.a2ui.pushJSONL")).toBe(true);
+    expect(allow.has("camera.list")).toBe(true);
+    expect(allow.has("location.get")).toBe(true);
+    expect(allow.has("device.info")).toBe(true);
+    expect(allow.has("device.status")).toBe(true);
+    expect(allow.has("screen.snapshot")).toBe(true);
+    expect(allow.has("system.run")).toBe(true);
+    expect(allow.has("system.which")).toBe(true);
+    expect(allow.has("system.notify")).toBe(true);
+
+    for (const cmd of DEFAULT_DANGEROUS_NODE_COMMANDS) {
+      expect(allow.has(cmd)).toBe(false);
+    }
   });
 
   it("can explicitly allow dangerous commands via allowCommands", () => {

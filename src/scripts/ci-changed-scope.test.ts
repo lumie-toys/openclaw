@@ -2,10 +2,10 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { bundledPluginFile } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, describe, expect, it } from "vitest";
-import { bundledPluginFile } from "../../test/helpers/bundled-plugin-paths.js";
 
-const { detectChangedScope, listChangedPaths } =
+const { detectChangedScope, detectInstallSmokeScope, detectNodeFastScope, listChangedPaths } =
   (await import("../../scripts/ci-changed-scope.mjs")) as unknown as {
     detectChangedScope: (paths: string[]) => {
       runNode: boolean;
@@ -15,6 +15,15 @@ const { detectChangedScope, listChangedPaths } =
       runSkillsPython: boolean;
       runChangedSmoke: boolean;
       runControlUiI18n: boolean;
+    };
+    detectInstallSmokeScope: (paths: string[]) => {
+      runFastInstallSmoke: boolean;
+      runFullInstallSmoke: boolean;
+    };
+    detectNodeFastScope: (paths: string[]) => {
+      runFastOnly: boolean;
+      runPluginContracts: boolean;
+      runCiRouting: boolean;
     };
     listChangedPaths: (base: string, head?: string) => string[];
   };
@@ -74,7 +83,7 @@ describe("detectChangedScope", () => {
   });
 
   it("enables node lane for node-relevant files", () => {
-    expect(detectChangedScope(["src/plugins/runtime/index.ts"])).toEqual({
+    expect(detectChangedScope(["src/config/defaults.ts"])).toEqual({
       runNode: true,
       runMacos: false,
       runAndroid: false,
@@ -238,6 +247,33 @@ describe("detectChangedScope", () => {
       runChangedSmoke: false,
       runControlUiI18n: false,
     });
+    expect(detectChangedScope(["src/shared/runtime-import.ts"])).toEqual({
+      runNode: true,
+      runMacos: false,
+      runAndroid: false,
+      runWindows: true,
+      runSkillsPython: false,
+      runChangedSmoke: false,
+      runControlUiI18n: false,
+    });
+    expect(detectChangedScope(["src/shared/runtime-import.test.ts"])).toEqual({
+      runNode: true,
+      runMacos: false,
+      runAndroid: false,
+      runWindows: true,
+      runSkillsPython: false,
+      runChangedSmoke: false,
+      runControlUiI18n: false,
+    });
+    expect(detectChangedScope(["src/plugins/import-specifier.test.ts"])).toEqual({
+      runNode: true,
+      runMacos: false,
+      runAndroid: false,
+      runWindows: true,
+      runSkillsPython: false,
+      runChangedSmoke: false,
+      runControlUiI18n: false,
+    });
     expect(detectChangedScope(["scripts/npm-runner.mjs"])).toEqual({
       runNode: true,
       runMacos: false,
@@ -295,6 +331,33 @@ describe("detectChangedScope", () => {
       runChangedSmoke: true,
       runControlUiI18n: false,
     });
+    expect(detectChangedScope(["scripts/e2e/Dockerfile"])).toEqual({
+      runNode: true,
+      runMacos: false,
+      runAndroid: false,
+      runWindows: false,
+      runSkillsPython: false,
+      runChangedSmoke: true,
+      runControlUiI18n: false,
+    });
+    expect(detectChangedScope(["scripts/e2e/agents-delete-shared-workspace-docker.sh"])).toEqual({
+      runNode: true,
+      runMacos: false,
+      runAndroid: false,
+      runWindows: false,
+      runSkillsPython: false,
+      runChangedSmoke: true,
+      runControlUiI18n: false,
+    });
+    expect(detectChangedScope(["scripts/e2e/plugin-update-unchanged-docker.sh"])).toEqual({
+      runNode: true,
+      runMacos: false,
+      runAndroid: false,
+      runWindows: false,
+      runSkillsPython: false,
+      runChangedSmoke: false,
+      runControlUiI18n: false,
+    });
     expect(detectChangedScope(["scripts/postinstall-bundled-plugins.mjs"])).toEqual({
       runNode: true,
       runMacos: false,
@@ -304,13 +367,113 @@ describe("detectChangedScope", () => {
       runChangedSmoke: true,
       runControlUiI18n: false,
     });
-    expect(detectChangedScope(["src/plugins/bundled-runtime-deps.ts"])).toEqual({
+    expect(detectChangedScope(["scripts/ci-changed-scope.mjs"])).toEqual({
       runNode: true,
       runMacos: false,
       runAndroid: false,
       runWindows: false,
       runSkillsPython: false,
       runChangedSmoke: true,
+      runControlUiI18n: false,
+    });
+  });
+
+  it("runs changed-smoke for Docker-covered core runtime surfaces", () => {
+    expect(detectChangedScope(["src/plugins/loader.ts"])).toEqual({
+      runNode: true,
+      runMacos: false,
+      runAndroid: false,
+      runWindows: false,
+      runSkillsPython: false,
+      runChangedSmoke: true,
+      runControlUiI18n: false,
+    });
+    expect(detectChangedScope(["src/plugin-sdk/provider-entry.ts"])).toEqual({
+      runNode: true,
+      runMacos: false,
+      runAndroid: false,
+      runWindows: false,
+      runSkillsPython: false,
+      runChangedSmoke: true,
+      runControlUiI18n: false,
+    });
+    expect(detectChangedScope(["src/gateway/protocol/messages.ts"])).toEqual({
+      runNode: true,
+      runMacos: false,
+      runAndroid: false,
+      runWindows: false,
+      runSkillsPython: false,
+      runChangedSmoke: true,
+      runControlUiI18n: false,
+    });
+    expect(detectChangedScope(["src/channels/plugins/catalog.ts"])).toEqual({
+      runNode: true,
+      runMacos: false,
+      runAndroid: false,
+      runWindows: false,
+      runSkillsPython: false,
+      runChangedSmoke: true,
+      runControlUiI18n: false,
+    });
+    expect(detectChangedScope([bundledPluginFile("matrix", "index.ts")])).toEqual({
+      runNode: true,
+      runMacos: false,
+      runAndroid: false,
+      runWindows: false,
+      runSkillsPython: false,
+      runChangedSmoke: false,
+      runControlUiI18n: false,
+    });
+  });
+
+  it("splits install smoke into fast and full scopes", () => {
+    expect(detectInstallSmokeScope([])).toEqual({
+      runFastInstallSmoke: true,
+      runFullInstallSmoke: true,
+    });
+    expect(detectInstallSmokeScope(["docs/ci.md"])).toEqual({
+      runFastInstallSmoke: false,
+      runFullInstallSmoke: false,
+    });
+    expect(detectInstallSmokeScope(["scripts/install.sh"])).toEqual({
+      runFastInstallSmoke: true,
+      runFullInstallSmoke: true,
+    });
+    expect(detectInstallSmokeScope(["Dockerfile"])).toEqual({
+      runFastInstallSmoke: true,
+      runFullInstallSmoke: true,
+    });
+    expect(detectInstallSmokeScope([bundledPluginFile("matrix", "package.json")])).toEqual({
+      runFastInstallSmoke: true,
+      runFullInstallSmoke: false,
+    });
+    expect(detectInstallSmokeScope(["src/plugins/loader.ts"])).toEqual({
+      runFastInstallSmoke: true,
+      runFullInstallSmoke: false,
+    });
+    expect(detectInstallSmokeScope([bundledPluginFile("matrix", "index.ts")])).toEqual({
+      runFastInstallSmoke: false,
+      runFullInstallSmoke: false,
+    });
+  });
+
+  it("keeps changed-smoke off for runtime-surface tests", () => {
+    expect(detectChangedScope(["src/plugins/loader.test.ts"])).toEqual({
+      runNode: true,
+      runMacos: false,
+      runAndroid: false,
+      runWindows: false,
+      runSkillsPython: false,
+      runChangedSmoke: false,
+      runControlUiI18n: false,
+    });
+    expect(detectChangedScope([bundledPluginFile("matrix", "index.test.ts")])).toEqual({
+      runNode: true,
+      runMacos: false,
+      runAndroid: false,
+      runWindows: false,
+      runSkillsPython: false,
+      runChangedSmoke: false,
       runControlUiI18n: false,
     });
   });
@@ -334,6 +497,55 @@ describe("detectChangedScope", () => {
       runSkillsPython: false,
       runChangedSmoke: false,
       runControlUiI18n: true,
+    });
+  });
+
+  it("identifies plugin contract helper changes as fast Node-only CI scope", () => {
+    const bundledCapabilityMetadataPath = [
+      "src/plugins/contracts",
+      "inventory/bundled-capability-metadata.ts",
+    ].join("/");
+    expect(
+      detectNodeFastScope([
+        bundledCapabilityMetadataPath,
+        "src/plugins/contracts/registry.ts",
+        "src/plugins/contracts/tts-contract-suites.ts",
+        "scripts/test-projects.test-support.mjs",
+        "test/scripts/test-projects.test.ts",
+      ]),
+    ).toEqual({
+      runFastOnly: true,
+      runPluginContracts: true,
+      runCiRouting: false,
+    });
+  });
+
+  it("identifies CI routing changes as fast Node-only CI scope", () => {
+    expect(
+      detectNodeFastScope([
+        ".github/workflows/ci.yml",
+        "scripts/ci-changed-scope.mjs",
+        "src/commands/status.scan-result.test.ts",
+        "src/scripts/ci-changed-scope.test.ts",
+        "docs/ci.md",
+      ]),
+    ).toEqual({
+      runFastOnly: true,
+      runPluginContracts: false,
+      runCiRouting: true,
+    });
+  });
+
+  it("keeps broad source changes on the full Node CI scope", () => {
+    expect(
+      detectNodeFastScope([
+        "src/plugins/contracts/manifest-loader.ts",
+        "src/plugins/contracts/registry.ts",
+      ]),
+    ).toEqual({
+      runFastOnly: false,
+      runPluginContracts: false,
+      runCiRouting: false,
     });
   });
 
@@ -378,6 +590,11 @@ describe("detectChangedScope", () => {
       run_windows: "false",
       run_skills_python: "false",
       run_changed_smoke: "false",
+      run_node_fast_only: "false",
+      run_node_fast_plugin_contracts: "false",
+      run_node_fast_ci_routing: "false",
+      run_fast_install_smoke: "false",
+      run_full_install_smoke: "false",
       run_control_ui_i18n: "false",
     });
   });

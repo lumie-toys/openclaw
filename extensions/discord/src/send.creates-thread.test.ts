@@ -1,7 +1,7 @@
-import { RateLimitError } from "@buape/carbon";
 import { ChannelType, Routes } from "discord-api-types/v10";
 import { loadWebMediaRaw } from "openclaw/plugin-sdk/web-media";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { RateLimitError } from "./internal/discord.js";
 import { makeDiscordRest } from "./send.test-harness.js";
 
 vi.mock("openclaw/plugin-sdk/web-media", async () => {
@@ -37,12 +37,12 @@ function discordClientOpts(rest: ReturnType<typeof makeDiscordRest>["rest"]) {
   return { cfg: DISCORD_TEST_CFG, rest, token: "t" };
 }
 
-function createCompatRateLimitError(
+function createRateLimitError(
   response: Response,
   body: { message: string; retry_after: number; global: boolean },
   request?: Request,
 ): RateLimitError {
-  const compatRequest =
+  const fallbackRequest =
     request ??
     new Request("https://discord.com/api/v10/channels/789/messages", {
       method: "POST",
@@ -52,7 +52,7 @@ function createCompatRateLimitError(
     body: { message: string; retry_after: number; global: boolean },
     request?: Request,
   ) => RateLimitError;
-  return new RateLimitErrorCtor(response, body, compatRequest);
+  return new RateLimitErrorCtor(response, body, fallbackRequest);
 }
 
 beforeAll(async () => {
@@ -468,7 +468,7 @@ function createMockRateLimitError(retryAfter = 0.001): RateLimitError {
       "X-RateLimit-Bucket": "test-bucket",
     },
   });
-  return createCompatRateLimitError(
+  return createRateLimitError(
     response,
     {
       message: "You are being rate limited.",
@@ -547,14 +547,31 @@ describe("retry rate limits", () => {
     expect(postMock).toHaveBeenCalledTimes(2);
   });
 
-  it("does not retry non-rate-limit errors", async () => {
+  it("does not retry permanent non-rate-limit errors", async () => {
     const { rest, postMock } = makeDiscordRest();
-    postMock.mockRejectedValueOnce(new Error("network error"));
+    postMock.mockRejectedValueOnce(new Error("invalid request"));
 
     await expect(
       sendMessageDiscord("channel:789", "hello", discordClientOpts(rest)),
-    ).rejects.toThrow("network error");
+    ).rejects.toThrow("invalid request");
     expect(postMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries transient network errors", async () => {
+    const { rest, postMock } = makeDiscordRest();
+    postMock
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce({ id: "msg1", channel_id: "789" });
+
+    const result = await sendMessageDiscord("channel:789", "hello", {
+      cfg: DISCORD_TEST_CFG,
+      rest,
+      token: "t",
+      retry: { attempts: 2, minDelayMs: 0, maxDelayMs: 0, jitter: 0 },
+    });
+
+    expect(result).toEqual({ messageId: "msg1", channelId: "789" });
+    expect(postMock).toHaveBeenCalledTimes(2);
   });
 
   it("retries reactions on rate limits", async () => {

@@ -4,6 +4,7 @@ import { createSlackSendTestClient, installSlackBlockTestMocks } from "./blocks.
 installSlackBlockTestMocks();
 const { sendMessageSlack } = await import("./send.js");
 const SLACK_TEST_CFG = { channels: { slack: { botToken: "xoxb-test" } } };
+const SLACK_TEXT_LIMIT = 8000;
 
 describe("sendMessageSlack NO_REPLY guard", () => {
   it("suppresses NO_REPLY text before any Slack API call", async () => {
@@ -73,6 +74,23 @@ describe("sendMessageSlack chunking", () => {
         text: message,
       }),
     );
+  });
+
+  it("splits oversized fallback text through the normal Slack sender", async () => {
+    const client = createSlackSendTestClient();
+    const message = "a".repeat(8500);
+
+    await sendMessageSlack("channel:C123", message, {
+      token: "xoxb-test",
+      cfg: SLACK_TEST_CFG,
+      client,
+    });
+
+    const postedTexts = client.chat.postMessage.mock.calls.map((call) => call[0].text);
+
+    expect(postedTexts).toHaveLength(2);
+    expect(postedTexts.every((text) => typeof text === "string" && text.length <= 8000)).toBe(true);
+    expect(postedTexts.join("")).toBe(message);
   });
 });
 
@@ -151,6 +169,36 @@ describe("sendMessageSlack blocks", () => {
         text: "Shared a file",
       }),
     );
+  });
+
+  it("caps long fallback text while preserving blocks", async () => {
+    const client = createSlackSendTestClient();
+    const longContextText = "a".repeat(3000);
+    const blocks = [
+      {
+        type: "context",
+        elements: [
+          { type: "mrkdwn", text: longContextText },
+          { type: "mrkdwn", text: longContextText },
+          { type: "mrkdwn", text: longContextText },
+        ],
+      },
+    ];
+
+    await sendMessageSlack("channel:C123", "", {
+      token: "xoxb-test",
+      cfg: SLACK_TEST_CFG,
+      client,
+      blocks,
+    });
+
+    expect(client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringMatching(/…$/),
+        blocks,
+      }),
+    );
+    expect(client.chat.postMessage.mock.calls[0]?.[0].text).toHaveLength(SLACK_TEXT_LIMIT);
   });
 
   it("rejects blocks combined with mediaUrl", async () => {
