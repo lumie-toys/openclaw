@@ -138,29 +138,6 @@ describe("handshake auth helpers", () => {
     ).toBe(false);
   });
 
-  it("allows silent pairing for remote clients when device auth is disabled", () => {
-    expect(
-      shouldAllowSilentLocalPairing({
-        locality: "remote",
-        hasBrowserOriginHeader: false,
-        isControlUi: false,
-        isWebchat: false,
-        reason: "role-upgrade",
-        dangerouslyDisableDeviceAuth: true,
-      }),
-    ).toBe(true);
-    expect(
-      shouldAllowSilentLocalPairing({
-        locality: "remote",
-        hasBrowserOriginHeader: true,
-        isControlUi: true,
-        isWebchat: true,
-        reason: "metadata-upgrade",
-        dangerouslyDisableDeviceAuth: true,
-      }),
-    ).toBe(true);
-  });
-
   it("classifies direct local requests ahead of any Docker CLI fallback", () => {
     const connectParams = {
       client: {
