@@ -915,6 +915,7 @@ export function attachGatewayWsMessageHandler(params: {
               isControlUi,
               isWebchat,
               reason,
+              dangerouslyDisableDeviceAuth: controlUiAuthPolicy.dangerouslyDisableDeviceAuth,
             });
             const allowSilentBootstrapPairing =
               authMethod === "bootstrap-token" &&

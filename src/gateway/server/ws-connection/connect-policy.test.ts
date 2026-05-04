@@ -190,11 +190,7 @@ describe("ws connect policy", () => {
       }).kind,
     ).toBe("allow");
 
-    // Regression: dangerouslyDisableDeviceAuth bypass must NOT extend to node-role
-    // sessions — the break-glass flag is scoped to operator Control UI only.
-    // A device-less node-role connection must still be rejected even when the flag
-    // is set, to prevent the flag from being abused to admit unauthorized node
-    // registrations.
+    // Break-glass mode now bypasses device identity for all roles.
     expect(
       evaluateMissingDeviceIdentity({
         hasDeviceIdentity: false,
@@ -207,10 +203,10 @@ describe("ws connect policy", () => {
         hasSharedAuth: false,
         isLocalClient: false,
       }).kind,
-    ).toBe("reject-device-required");
+    ).toBe("allow");
   });
 
-  test("dangerouslyDisableDeviceAuth skips pairing for operator clients", () => {
+  test("dangerouslyDisableDeviceAuth skips pairing for all clients", () => {
     const bypass = resolveControlUiAuthPolicy({
       isControlUi: true,
       controlUiConfig: { dangerouslyDisableDeviceAuth: true },
@@ -228,7 +224,7 @@ describe("ws connect policy", () => {
     });
     expect(shouldSkipControlUiPairing(bypass, "operator", false)).toBe(true);
     expect(shouldSkipControlUiPairing(nonControlUiBypass, "operator", false)).toBe(true);
-    expect(shouldSkipControlUiPairing(bypass, "node", false)).toBe(false);
+    expect(shouldSkipControlUiPairing(bypass, "node", false)).toBe(true);
     expect(shouldSkipControlUiPairing(strict, "operator", false)).toBe(false);
     expect(shouldSkipControlUiPairing(strict, "operator", true)).toBe(true);
   });

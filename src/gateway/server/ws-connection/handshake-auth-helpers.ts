@@ -78,7 +78,11 @@ export function shouldAllowSilentLocalPairing(params: {
   isControlUi: boolean;
   isWebchat: boolean;
   reason: "not-paired" | "role-upgrade" | "scope-upgrade" | "metadata-upgrade";
+  dangerouslyDisableDeviceAuth?: boolean;
 }): boolean {
+  if (params.dangerouslyDisableDeviceAuth) {
+    return true;
+  }
   if (params.locality === "remote") {
     return false;
   }
