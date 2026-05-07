@@ -32,7 +32,6 @@ const ROOT_SECTIONS = [
   "web",
   "channels",
   "discovery",
-  "canvasHost",
   "talk",
   "gateway",
   "memory",
@@ -176,6 +175,8 @@ const TARGET_KEYS = [
   "session.threadBindings.enabled",
   "session.threadBindings.idleHours",
   "session.threadBindings.maxAgeHours",
+  "session.threadBindings.spawnSessions",
+  "session.threadBindings.defaultSpawnContext",
   "session.maintenance",
   "session.maintenance.mode",
   "session.maintenance.pruneAfter",
@@ -322,11 +323,6 @@ const TARGET_KEYS = [
   "discovery.mdns",
   "discovery.mdns.mode",
   "gateway.controlUi.embedSandbox",
-  "canvasHost",
-  "canvasHost.enabled",
-  "canvasHost.root",
-  "canvasHost.port",
-  "canvasHost.liveReload",
   "talk",
   "talk.interruptOnSpeech",
   "talk.silenceTimeoutMs",
@@ -367,6 +363,8 @@ const TARGET_KEYS = [
   "plugins.entries.*.hooks",
   "plugins.entries.*.hooks.allowPromptInjection",
   "plugins.entries.*.hooks.allowConversationAccess",
+  "plugins.entries.*.hooks.timeoutMs",
+  "plugins.entries.*.hooks.timeouts",
   "plugins.entries.*.subagent",
   "plugins.entries.*.subagent.allowModelOverride",
   "plugins.entries.*.subagent.allowedModels",
@@ -687,6 +685,12 @@ describe("config help copy quality", () => {
     expect(/raw|unnormalized/i.test(rawKeyPrefix)).toBe(true);
   });
 
+  it("documents session write-lock acquire timeout defaults", () => {
+    const acquireTimeout = FIELD_HELP["session.writeLock.acquireTimeoutMs"];
+    expect(acquireTimeout.includes("60000")).toBe(true);
+    expect(/transcript|lock/i.test(acquireTimeout)).toBe(true);
+  });
+
   it("documents session maintenance duration/size examples and deprecations", () => {
     const pruneAfter = FIELD_HELP["session.maintenance.pruneAfter"];
     expect(pruneAfter.includes("30d")).toBe(true);
@@ -792,6 +796,14 @@ describe("config help copy quality", () => {
     expect(pluginConversationPolicy.includes("llm_input")).toBe(true);
     expect(pluginConversationPolicy.includes("llm_output")).toBe(true);
     expect(pluginConversationPolicy.includes("before_agent_finalize")).toBe(true);
+
+    const pluginHookTimeout = FIELD_HELP["plugins.entries.*.hooks.timeoutMs"];
+    expect(pluginHookTimeout.includes("typed hooks")).toBe(true);
+    expect(pluginHookTimeout.includes("hooks.timeouts")).toBe(true);
+
+    const pluginHookTimeouts = FIELD_HELP["plugins.entries.*.hooks.timeouts"];
+    expect(pluginHookTimeouts.includes("before_prompt_build")).toBe(true);
+    expect(pluginHookTimeouts.includes("agent_end")).toBe(true);
     expect(pluginConversationPolicy.includes("agent_end")).toBe(true);
   });
 

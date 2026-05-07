@@ -1,13 +1,18 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { copyA2uiAssets } from "../../scripts/canvas-a2ui-copy.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { copyA2uiAssets } from "../../extensions/canvas/scripts/copy-a2ui.mjs";
 import { withTempDir } from "../test-utils/temp-dir.js";
 
 const ORIGINAL_SKIP_MISSING = process.env.OPENCLAW_A2UI_SKIP_MISSING;
 const ORIGINAL_SPARSE_PROFILE = process.env.OPENCLAW_SPARSE_PROFILE;
 
 describe("canvas a2ui copy", () => {
+  beforeEach(() => {
+    delete process.env.OPENCLAW_A2UI_SKIP_MISSING;
+    delete process.env.OPENCLAW_SPARSE_PROFILE;
+  });
+
   afterEach(() => {
     if (ORIGINAL_SKIP_MISSING === undefined) {
       delete process.env.OPENCLAW_A2UI_SKIP_MISSING;

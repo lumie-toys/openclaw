@@ -11,7 +11,11 @@ import {
   resolveDefaultAgentId,
 } from "../../agents/agent-scope.js";
 import { externalCliDiscoveryForProviderAuth } from "../../agents/auth-profiles.js";
-import { listProfilesForProvider, upsertAuthProfile } from "../../agents/auth-profiles/profiles.js";
+import {
+  listProfilesForProvider,
+  promoteAuthProfileInOrder,
+  upsertAuthProfile,
+} from "../../agents/auth-profiles/profiles.js";
 import { loadAuthProfileStoreForRuntime } from "../../agents/auth-profiles/store.js";
 import type { AuthProfileCredential } from "../../agents/auth-profiles/types.js";
 import { clearAuthProfileCooldown } from "../../agents/auth-profiles/usage.js";
@@ -246,6 +250,11 @@ async function persistProviderAuthResult(params: {
       profileId: profile.profileId,
       credential: profile.credential,
       agentDir: params.agentDir,
+    });
+    await promoteAuthProfileInOrder({
+      agentDir: params.agentDir,
+      provider: profile.credential.provider,
+      profileId: profile.profileId,
     });
   }
 
@@ -579,9 +588,12 @@ export function resolveRequestedLoginProviderOrThrow(
   return resolveRequestedProviderOrThrow(providers, rawProvider);
 }
 
-function credentialMode(credential: AuthProfileCredential): "api_key" | "oauth" | "token" {
+function credentialMode(credential: AuthProfileCredential): AuthProfileCredential["type"] {
   if (credential.type === "api_key") {
     return "api_key";
+  }
+  if (credential.type === "aws-sdk") {
+    return "aws-sdk";
   }
   if (credential.type === "token") {
     return "token";

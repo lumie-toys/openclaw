@@ -44,6 +44,21 @@ async function expectVertexAdcEnvApiKey(params: {
   }
 }
 
+function testModelDefinition(id: string): Model<Api> {
+  return {
+    id,
+    name: id,
+    provider: "test",
+    api: "responses",
+    baseUrl: "https://example.test/v1",
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128_000,
+    maxTokens: 8192,
+  };
+}
+
 vi.mock("../plugins/setup-registry.js", async () => {
   const { readFileSync } = await import("node:fs");
   return {
@@ -274,6 +289,61 @@ async function expectBedrockAuthSource(params: {
     expect(resolved.source).toContain(params.expectedSource);
   });
 }
+
+it("resolves persisted aws-sdk auth profiles without static keys (#69708)", async () => {
+  const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-bedrock-auth-profile-"));
+  try {
+    await fs.writeFile(
+      path.join(agentDir, "auth-profiles.json"),
+      `${JSON.stringify(
+        {
+          version: 1,
+          profiles: {
+            "amazon-bedrock:default": {
+              type: "aws-sdk",
+              provider: "amazon-bedrock",
+              createdAt: "2026-03-15T10:00:00.000Z",
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    clearRuntimeAuthProfileStoreSnapshots();
+    const store = ensureAuthProfileStore(agentDir);
+
+    const resolved = await resolveApiKeyForProvider({
+      provider: "amazon-bedrock",
+      profileId: "amazon-bedrock:default",
+      cfg: BEDROCK_PROVIDER_CFG as never,
+      store,
+      agentDir,
+    });
+
+    expect(resolved).toMatchObject({
+      mode: "aws-sdk",
+      profileId: "amazon-bedrock:default",
+      source: "profile:amazon-bedrock:default",
+    });
+    expect(resolved.apiKey).toBeUndefined();
+    await expect(
+      hasAvailableAuthForProvider({
+        provider: "amazon-bedrock",
+        cfg: BEDROCK_PROVIDER_CFG as never,
+        store,
+        agentDir,
+      }),
+    ).resolves.toBe(true);
+    expect(resolveModelAuthMode("amazon-bedrock", BEDROCK_PROVIDER_CFG as never, store)).toBe(
+      "aws-sdk",
+    );
+  } finally {
+    await fs.rm(agentDir, { recursive: true, force: true });
+    clearRuntimeAuthProfileStoreSnapshots();
+  }
+});
 
 function buildDemoLocalStore(keys: string[]) {
   return {
@@ -625,6 +695,51 @@ describe("getApiKeyForModel", () => {
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("reuses runtime auth availability for provider auth checks", () => {
+    const store = { version: 1 as const, profiles: {} };
+    const localNoKeyConfig = {
+      models: {
+        providers: {
+          vllm: {
+            api: "openai-completions",
+            baseUrl: "http://127.0.0.1:8000/v1",
+            models: [testModelDefinition("meta-llama/Meta-Llama-3-8B-Instruct")],
+          },
+          remote: {
+            api: "openai-completions",
+            baseUrl: "https://remote.example.com/v1",
+            models: [testModelDefinition("remote-model")],
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    expect(
+      hasAuthForModelProvider({
+        provider: "amazon-bedrock",
+        cfg: {} as OpenClawConfig,
+        env: {},
+        store,
+      }),
+    ).toBe(true);
+    expect(
+      hasAuthForModelProvider({
+        provider: "vllm",
+        cfg: localNoKeyConfig,
+        env: {},
+        store,
+      }),
+    ).toBe(true);
+    expect(
+      hasAuthForModelProvider({
+        provider: "remote",
+        cfg: localNoKeyConfig,
+        env: {},
+        store,
+      }),
+    ).toBe(false);
   });
 
   it("hasAvailableAuthForProvider('google') accepts GOOGLE_API_KEY fallback", async () => {

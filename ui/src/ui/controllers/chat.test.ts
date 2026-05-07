@@ -223,6 +223,17 @@ describe("handleChatEvent", () => {
     expect(state.chatMessages).toEqual([]);
   });
 
+  it("drops HEARTBEAT_OK final payload from another run without clearing active stream", () => {
+    const state = createActiveStreamingState();
+    const payload = createOtherRunSilentFinalPayload("HEARTBEAT_OK");
+
+    expect(handleChatEvent(state, payload)).toBe("final");
+    expect(state.chatRunId).toBe("run-user");
+    expect(state.chatStream).toBe("Working...");
+    expect(state.chatStreamStartedAt).toBe(123);
+    expect(state.chatMessages).toEqual([]);
+  });
+
   it.each(["no_reply", "ANNOUNCE_SKIP", "REPLY_SKIP"])(
     "keeps plain-text %s final payload from another run without clearing active stream",
     (text) => {
@@ -236,6 +247,23 @@ describe("handleChatEvent", () => {
       expect(state.chatMessages).toEqual([payload.message]);
     },
   );
+
+  it("ignores HEARTBEAT_OK delta updates", () => {
+    const state = createState({
+      sessionKey: "main",
+      chatRunId: "run-1",
+      chatStream: "Previous visible text",
+    });
+    const payload: ChatEventPayload = {
+      runId: "run-1",
+      sessionKey: "main",
+      state: "delta",
+      message: { role: "assistant", content: [{ type: "text", text: "HEARTBEAT_OK" }] },
+    };
+
+    expect(handleChatEvent(state, payload)).toBe("delta");
+    expect(state.chatStream).toBe("Previous visible text");
+  });
 
   it("replaces the stream when a delta snapshot gets shorter", () => {
     const state = createState({
@@ -820,6 +848,34 @@ describe("sendChatMessage", () => {
     expect(state.chatMessages).toHaveLength(1);
   });
 
+  it("passes the backing session id from history when sending after reconnect", async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sessionId: "session-before-reconnect",
+        messages: [],
+      })
+      .mockResolvedValueOnce({ runId: "run-1", status: "started" });
+    const state = createState({
+      connected: true,
+      client: { request } as unknown as ChatState["client"],
+    });
+
+    await loadChatHistory(state);
+    const result = await sendChatMessage(state, "continue");
+
+    expect(result).toEqual(expect.any(String));
+    expect(state.currentSessionId).toBe("session-before-reconnect");
+    expect(request).toHaveBeenLastCalledWith(
+      "chat.send",
+      expect.objectContaining({
+        sessionKey: "main",
+        sessionId: "session-before-reconnect",
+        message: "continue",
+      }),
+    );
+  });
+
   it("serializes non-image chat attachments as files", async () => {
     const request = vi.fn().mockResolvedValue({ runId: "run-1", status: "started" });
     const state = createState({
@@ -1023,7 +1079,8 @@ describe("loadChatHistory", () => {
 
     expect(request).toHaveBeenCalledWith("chat.history", {
       sessionKey: "main",
-      limit: 200,
+      limit: 100,
+      maxChars: 4000,
     });
     expect(state.chatMessages).toEqual([
       { role: "assistant", content: [{ type: "text", text: "visible answer" }] },

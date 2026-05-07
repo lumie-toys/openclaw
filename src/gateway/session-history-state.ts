@@ -81,12 +81,12 @@ function buildPaginatedSessionHistory(params: {
   };
 }
 
-export function resolveMessageSeq(message: SessionHistoryMessage | undefined): number | undefined {
+function resolveMessageSeq(message: SessionHistoryMessage | undefined): number | undefined {
   const seq = message?.__openclaw?.seq;
   return typeof seq === "number" && Number.isFinite(seq) && seq > 0 ? seq : undefined;
 }
 
-export function paginateSessionMessages(
+function paginateSessionMessages(
   messages: SessionHistoryMessage[],
   limit: number | undefined,
   cursor: string | undefined,
@@ -275,7 +275,9 @@ export class SessionHistorySseState {
         this.target.sessionId,
         this.target.storePath,
         this.target.sessionFile,
-        resolveSessionHistoryTailReadOptions(this.limit),
+        {
+          ...resolveSessionHistoryTailReadOptions(this.limit),
+        },
       );
       return {
         rawMessages: snapshot.messages,
@@ -288,6 +290,10 @@ export class SessionHistorySseState {
         this.target.sessionId,
         this.target.storePath,
         this.target.sessionFile,
+        {
+          mode: "full",
+          reason: "session history cursor pagination",
+        },
       ),
     };
   }
