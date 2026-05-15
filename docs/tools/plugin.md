@@ -13,7 +13,7 @@ agent harnesses, tools, skills, speech, realtime transcription, realtime
 voice, media-understanding, image generation, video generation, web fetch, web
 search, and more. Some plugins are **core** (shipped with OpenClaw), others
 are **external**. Most external plugins are published and discovered through
-[ClawHub](/tools/clawhub). Npm remains supported for direct installs and for a
+[ClawHub](/clawhub). Npm remains supported for direct installs and for a
 temporary set of OpenClaw-owned plugin packages while that migration finishes.
 
 ## Quick start
@@ -196,6 +196,13 @@ Packaged installs must ship that JavaScript runtime output. The TypeScript
 source fallback is for source checkouts and local development paths, not for
 npm packages installed into OpenClaw's managed plugin root.
 
+Untracked directories dropped into the global extension root are treated as
+local source checkouts and may load TypeScript entries directly. Directories
+still named by an install record, including `installPath` or `sourcePath`, stay
+managed and keep the compiled-output requirement even when the global scan sees
+them. If you intentionally convert a managed install into an untracked local
+checkout, remove the stale install record first with uninstall or doctor cleanup.
+
 If a managed package warning says it `requires compiled runtime output for
 TypeScript entry ...`, the package was published without the JavaScript files
 OpenClaw needs at runtime. That is a plugin packaging issue, not a local config
@@ -235,7 +242,6 @@ current OpenClaw or a local checkout until a newer npm package is published.
 
 | Plugin          | Package                    | Docs                                       |
 | --------------- | -------------------------- | ------------------------------------------ |
-| BlueBubbles     | `@openclaw/bluebubbles`    | [BlueBubbles](/channels/bluebubbles)       |
 | Discord         | `@openclaw/discord`        | [Discord](/channels/discord)               |
 | Feishu          | `@openclaw/feishu`         | [Feishu](/channels/feishu)                 |
 | Matrix          | `@openclaw/matrix`         | [Matrix](/channels/matrix)                 |
@@ -280,7 +286,7 @@ current OpenClaw or a local checkout until a newer npm package is published.
   </Accordion>
 </AccordionGroup>
 
-Looking for third-party plugins? See [Community Plugins](/plugins/community).
+Looking for third-party plugins? See [ClawHub](/clawhub).
 
 ## Configuration
 
@@ -392,8 +398,8 @@ even when source overlay mounts are present.
   re-enable plugins before running doctor cleanup if you want stale ids removed
 - OpenAI-family Codex routes keep separate plugin boundaries:
   `openai-codex/*` belongs to the OpenAI plugin, while the bundled Codex
-  app-server plugin is selected by `agentRuntime.id: "codex"` or legacy
-  `codex/*` model refs
+  app-server plugin is selected by canonical `openai/*` agent refs, explicit
+  provider/model `agentRuntime.id: "codex"`, or legacy `codex/*` model refs
 
 ## Troubleshooting runtime hooks
 
@@ -537,8 +543,10 @@ openclaw plugins install -l <path>         # link (no copy) for dev
 openclaw plugins install <plugin> --marketplace <source>
 openclaw plugins install <plugin> --marketplace https://github.com/<owner>/<repo>
 openclaw plugins install <spec> --pin      # record exact resolved npm spec
+openclaw plugins install <spec> --acknowledge-clawhub-risk
 openclaw plugins install <spec> --dangerously-force-unsafe-install
 openclaw plugins update <id-or-npm-spec> # update one plugin
+openclaw plugins update <id-or-npm-spec> --acknowledge-clawhub-risk
 openclaw plugins update <id-or-npm-spec> --dangerously-force-unsafe-install
 openclaw plugins update --all            # update all
 openclaw plugins uninstall <id>          # remove config and plugin index records
@@ -596,6 +604,14 @@ beta release exists. Exact versions and explicit tags stay pinned.
 
 `--pin` is npm-only. It is not supported with `--marketplace`, because
 marketplace installs persist marketplace source metadata instead of an npm spec.
+
+ClawHub-backed plugin installs and updates check the exact target release's
+ClawHub trust record before download. If ClawHub reports risk for that release,
+OpenClaw prints the package, version, scan status, moderation state, and reason
+codes, then requires confirmation before continuing. Non-interactive automation
+must pass `--acknowledge-clawhub-risk` after reviewing that warning. The flag
+acknowledges ClawHub registry risk only; it does not bypass plugin
+`before_install` hook policy blocks or the built-in dangerous-code scanner.
 
 `--dangerously-force-unsafe-install` is a break-glass override for false
 positives from the built-in dangerous-code scanner. It allows plugin installs
@@ -718,7 +734,7 @@ hook surface. Plugins can block native Codex tools through `before_tool_call`,
 observe results through `after_tool_call`, and participate in Codex
 `PermissionRequest` approvals. The bridge does not rewrite Codex-native tool
 arguments yet. The exact Codex runtime support boundary lives in the
-[Codex harness v1 support contract](/plugins/codex-harness#v1-support-contract).
+[Codex harness v1 support contract](/plugins/codex-harness-runtime#v1-support-contract).
 
 For full typed hook behavior, see [SDK overview](/plugins/sdk-overview#hook-decision-semantics).
 
@@ -729,4 +745,4 @@ For full typed hook behavior, see [SDK overview](/plugins/sdk-overview#hook-deci
 - [Plugin manifest](/plugins/manifest) - manifest schema
 - [Registering tools](/plugins/building-plugins#registering-agent-tools) - add agent tools in a plugin
 - [Plugin internals](/plugins/architecture) - capability model and load pipeline
-- [Community plugins](/plugins/community) - third-party listings
+- [ClawHub](/clawhub) - third-party plugin discovery

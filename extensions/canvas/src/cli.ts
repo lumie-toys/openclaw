@@ -12,8 +12,8 @@ import { defaultRuntime } from "openclaw/plugin-sdk/runtime";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
-  shortenHomePath,
-} from "openclaw/plugin-sdk/text-runtime";
+} from "openclaw/plugin-sdk/string-coerce-runtime";
+import { shortenHomePath } from "openclaw/plugin-sdk/text-utility-runtime";
 import { buildA2UITextJsonl, validateA2UIJsonl } from "./a2ui-jsonl.js";
 import { canvasSnapshotTempPath, parseCanvasSnapshotPayload } from "./cli-helpers.js";
 
@@ -102,15 +102,23 @@ function parseNodeCandidates(raw: unknown): CanvasNodeCandidate[] {
         connected?: unknown;
         clientId?: unknown;
       };
-      return typeof node.nodeId === "string"
-        ? {
-            nodeId: node.nodeId,
-            ...(typeof node.displayName === "string" && { displayName: node.displayName }),
-            ...(typeof node.remoteIp === "string" && { remoteIp: node.remoteIp }),
-            ...(typeof node.connected === "boolean" && { connected: node.connected }),
-            ...(typeof node.clientId === "string" && { clientId: node.clientId }),
-          }
-        : null;
+      if (typeof node.nodeId !== "string") {
+        return null;
+      }
+      const candidate: CanvasNodeCandidate = { nodeId: node.nodeId };
+      if (typeof node.displayName === "string") {
+        candidate.displayName = node.displayName;
+      }
+      if (typeof node.remoteIp === "string") {
+        candidate.remoteIp = node.remoteIp;
+      }
+      if (typeof node.connected === "boolean") {
+        candidate.connected = node.connected;
+      }
+      if (typeof node.clientId === "string") {
+        candidate.clientId = node.clientId;
+      }
+      return candidate;
     })
     .filter((entry): entry is CanvasNodeCandidate => entry !== null);
 }

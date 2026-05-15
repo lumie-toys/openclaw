@@ -1,4 +1,4 @@
-import type { OpenClawConfig } from "openclaw/plugin-sdk/config-types";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import {
   normalizePluginsConfig,
   resolveEffectiveEnableState,
@@ -59,9 +59,7 @@ export function parseCanvasPluginConfig(value: unknown): CanvasPluginConfig {
     return {};
   }
   const host = parseCanvasHostConfig(value.host);
-  return {
-    ...(host ? { host } : {}),
-  };
+  return host ? { host } : {};
 }
 
 export function isCanvasPluginEnabled(config?: OpenClawConfig): boolean {

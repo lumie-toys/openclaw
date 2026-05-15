@@ -1,5 +1,5 @@
-import type { OpenClawConfig } from "openclaw/plugin-sdk/config-types";
-import { isRecord } from "openclaw/plugin-sdk/text-runtime";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 
 type MutableRecord = Record<string, unknown>;
 
@@ -11,10 +11,7 @@ function mergeHostConfig(params: {
   legacyHost: MutableRecord;
   existingHost: MutableRecord | undefined;
 }): MutableRecord {
-  return {
-    ...params.legacyHost,
-    ...(params.existingHost ?? {}),
-  };
+  return Object.assign({}, params.legacyHost, params.existingHost);
 }
 
 export function migrateLegacyCanvasHostConfig(config: OpenClawConfig): {

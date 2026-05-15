@@ -16,6 +16,12 @@ export type OAuthCredentials = {
   idToken?: string;
 };
 
+export type OAuthCredentialRef = {
+  source: "openclaw-credentials";
+  provider: "openai-codex";
+  id: string;
+};
+
 export type ApiKeyCredential = {
   type: "api_key";
   provider: string;
@@ -26,17 +32,6 @@ export type ApiKeyCredential = {
   email?: string;
   displayName?: string;
   /** Optional provider-specific metadata (e.g., account IDs, gateway IDs). */
-  metadata?: Record<string, string>;
-};
-
-export type AwsSdkCredential = {
-  type: "aws-sdk";
-  provider: string;
-  /** Explicit opt-out for copying this profile when creating another agent. */
-  copyToAgents?: boolean;
-  email?: string;
-  displayName?: string;
-  /** Optional provider-specific metadata (e.g., account IDs, regions). */
   metadata?: Record<string, string>;
 };
 
@@ -68,13 +63,10 @@ export type OAuthCredential = OAuthCredentials & {
   copyToAgents?: boolean;
   email?: string;
   displayName?: string;
+  oauthRef?: OAuthCredentialRef;
 };
 
-export type AuthProfileCredential =
-  | ApiKeyCredential
-  | AwsSdkCredential
-  | TokenCredential
-  | OAuthCredential;
+export type AuthProfileCredential = ApiKeyCredential | TokenCredential | OAuthCredential;
 
 export type AuthProfileFailureReason =
   | "auth"
@@ -91,9 +83,16 @@ export type AuthProfileFailureReason =
   | "unclassified"
   | "unknown";
 
+export type AuthProfileBlockedReason = "subscription_limit";
+export type AuthProfileBlockedSource = "codex_rate_limits" | "wham";
+
 /** Per-profile usage statistics for round-robin and cooldown tracking */
 export type ProfileUsageStats = {
   lastUsed?: number;
+  blockedUntil?: number;
+  blockedReason?: AuthProfileBlockedReason;
+  blockedSource?: AuthProfileBlockedSource;
+  blockedModel?: string;
   cooldownUntil?: number;
   cooldownReason?: AuthProfileFailureReason;
   cooldownModel?: string;
