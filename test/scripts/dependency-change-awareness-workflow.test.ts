@@ -33,7 +33,7 @@ describe("dependency change awareness workflow", () => {
     expect(workflow).toContain("pull_request_target:");
     expect(workflow).toContain("metadata-only workflow; no checkout or untrusted code execution");
     expect(parsed.permissions).toEqual({
-      "pull-requests": "read",
+      "pull-requests": "write",
       issues: "write",
     });
   });
@@ -79,17 +79,23 @@ describe("dependency change awareness workflow", () => {
     expect(step.with?.script).toContain("github.rest.issues.createComment");
     expect(step.with?.script).toContain("github.rest.issues.updateComment");
     expect(step.with?.script).toContain("github.rest.issues.deleteComment");
+    expect(step.with?.script).toContain("ignoreUnavailableWritePermission");
+    expect(step.with?.script).toContain("error?.status === 403");
     expect(workflow).toContain('"dependencies-changed"');
   });
 
   it("detects the intended dependency-related file surfaces", () => {
     const script = readWorkflow().jobs?.["dependency-change-awareness"]?.steps?.[0].with?.script;
     expect(script).toContain('filename === "package.json"');
+    expect(script).toContain('filename === "package-lock.json"');
+    expect(script).toContain('filename === "npm-shrinkwrap.json"');
     expect(script).toContain('filename === "pnpm-lock.yaml"');
     expect(script).toContain('filename === "pnpm-workspace.yaml"');
     expect(script).toContain('filename === "ui/package.json"');
     expect(script).toContain('filename.startsWith("patches/")');
     expect(script).toContain("^packages\\/[^/]+\\/package\\.json$");
+    expect(script).toContain("^extensions\\/[^/]+\\/package-lock\\.json$");
+    expect(script).toContain("^extensions\\/[^/]+\\/npm-shrinkwrap\\.json$");
     expect(script).toContain("^extensions\\/[^/]+\\/package\\.json$");
   });
 
@@ -101,5 +107,9 @@ describe("dependency change awareness workflow", () => {
     expect(codeowners).toContain(
       "/test/scripts/dependency-change-awareness-workflow.test.ts @openclaw/openclaw-secops",
     );
+    expect(codeowners).toContain("/package-lock.json @openclaw/openclaw-secops");
+    expect(codeowners).toContain("/npm-shrinkwrap.json @openclaw/openclaw-secops");
+    expect(codeowners).toContain("/extensions/*/package-lock.json @openclaw/openclaw-secops");
+    expect(codeowners).toContain("/extensions/*/npm-shrinkwrap.json @openclaw/openclaw-secops");
   });
 });

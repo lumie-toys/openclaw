@@ -5,7 +5,7 @@ on:
     types: [opened, reopened, synchronize, ready_for_review]
 
 permissions:
-  pull-requests: read
+  pull-requests: write
   issues: write
 
 concurrency:
@@ -34,11 +34,15 @@ jobs:
 
             const isDependencyFile = (filename) =>
               filename === "package.json" ||
+              filename === "package-lock.json" ||
+              filename === "npm-shrinkwrap.json" ||
               filename === "pnpm-lock.yaml" ||
               filename === "pnpm-workspace.yaml" ||
               filename === "ui/package.json" ||
               filename.startsWith("patches/") ||
               /^packages\/[^/]+\/package\.json$/u.test(filename) ||
+              /^extensions\/[^/]+\/package-lock\.json$/u.test(filename) ||
+              /^extensions\/[^/]+\/npm-shrinkwrap\.json$/u.test(filename) ||
               /^extensions\/[^/]+\/package\.json$/u.test(filename);
 
             const sanitizeDisplayValue = (value) =>
@@ -47,6 +51,19 @@ jobs:
                 .slice(0, 240);
             const markdownCode = (value) =>
               `\`${sanitizeDisplayValue(value).replaceAll("`", "\\`")}\``;
+            const ignoreUnavailableWritePermission = (action) => (error) => {
+              if (error?.status === 403) {
+                core.warning(
+                  `Skipping dependency change ${action}; token does not have issue write permission.`,
+                );
+                return;
+              }
+              if (error?.status === 404 || error?.status === 422) {
+                core.warning(`Dependency change ${action} is unavailable.`);
+                return;
+              }
+              throw error;
+            };
 
             const files = await github.paginate(github.rest.pulls.listFiles, {
               owner: context.repo.owner,
@@ -85,18 +102,14 @@ jobs:
                   repo: context.repo.repo,
                   issue_number: pullRequest.number,
                   name: labelName,
-                }).catch((error) => {
-                  if (error?.status !== 404) {
-                    throw error;
-                  }
-                });
+                }).catch(ignoreUnavailableWritePermission("label removal"));
               }
               if (existingComment) {
                 await github.rest.issues.deleteComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   comment_id: existingComment.id,
-                });
+                }).catch(ignoreUnavailableWritePermission("comment deletion"));
               }
               await core.summary
                 .addHeading("Dependency Change Awareness")
@@ -112,13 +125,7 @@ jobs:
                 repo: context.repo.repo,
                 issue_number: pullRequest.number,
                 labels: [labelName],
-              }).catch((error) => {
-                if (error?.status === 404 || error?.status === 422) {
-                  core.warning(`Dependency change label "${labelName}" is missing or unavailable.`);
-                  return;
-                }
-                throw error;
-              });
+              }).catch(ignoreUnavailableWritePermission(`label "${labelName}" update`));
             }
 
             const listedFiles = dependencyFiles.slice(0, maxListedFiles);
@@ -140,7 +147,8 @@ jobs:
               "",
               "Maintainer follow-up:",
               "- Review whether the dependency changes are intentional.",
-              "- Inspect resolved package deltas when lockfile or workspace dependency policy changes are present.",
+              "- Inspect resolved package deltas when lockfile, shrinkwrap, or workspace dependency policy changes are present.",
+              "- Treat `package-lock.json` and `npm-shrinkwrap.json` diffs as security-review surfaces.",
               "- Run `pnpm deps:changes:report -- --base-ref origin/main --markdown /tmp/dependency-changes.md --json /tmp/dependency-changes.json` locally for detailed release-style evidence.",
             ].join("\n");
 
@@ -150,14 +158,14 @@ jobs:
                 repo: context.repo.repo,
                 comment_id: existingComment.id,
                 body,
-              });
+              }).catch(ignoreUnavailableWritePermission("comment update"));
             } else {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: pullRequest.number,
                 body,
-              });
+              }).catch(ignoreUnavailableWritePermission("comment creation"));
             }
 
             await core.summary
