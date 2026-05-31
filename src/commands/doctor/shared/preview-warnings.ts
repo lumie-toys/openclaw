@@ -1,7 +1,7 @@
+import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { resolveAgentConfig } from "../../../agents/agent-scope-config.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../../../agents/defaults.js";
 import { parseModelRef } from "../../../agents/model-selection-normalize.js";
-import { normalizeProviderId } from "../../../agents/provider-id.js";
 import { pickSandboxToolPolicy } from "../../../agents/sandbox-tool-policy.js";
 import {
   isToolAllowedByPolicies,
@@ -773,6 +773,10 @@ export async function collectDoctorPreviewNotes(params: {
   warnings.push(...collectChannelBoundMessageToolPolicyWarnings(params.cfg));
   warnings.push(...collectProfileConfiguredToolSectionWarnings(params.cfg));
 
+  const { collectActiveToolSchemaProjectionWarnings } =
+    await import("./active-tool-schema-warnings.js");
+  warnings.push(...collectActiveToolSchemaProjectionWarnings({ cfg: params.cfg, env }));
+
   const channelPluginRuntime =
     hasChannelConfig && hasExplicitChannelPluginBlockerConfig(params.cfg)
       ? await import("./channel-plugin-blockers.js")
@@ -895,7 +899,7 @@ export async function collectDoctorPreviewNotes(params: {
         ),
     );
     if (emptyAllowlistWarnings.length > 0) {
-      const { sanitizeForLog } = await import("../../../terminal/ansi.js");
+      const { sanitizeForLog } = await import("../../../../packages/terminal-core/src/ansi.js");
       warnings.push(emptyAllowlistWarnings.map((line) => sanitizeForLog(line)).join("\n"));
     }
   }

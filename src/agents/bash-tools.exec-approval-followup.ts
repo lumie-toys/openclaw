@@ -10,12 +10,12 @@ import {
 } from "../shared/string-coerce.js";
 import { isGatewayMessageChannel, normalizeMessageChannel } from "../utils/message-channel.js";
 import { buildExecApprovalFollowupIdempotencyKey } from "./bash-tools.exec-approval-followup-state.js";
+import { sanitizeUserFacingText } from "./embedded-agent-helpers/sanitize-user-facing-text.js";
 import {
   formatExecDeniedUserMessage,
   isExecDeniedResultText,
   parseExecApprovalResultText,
 } from "./exec-approval-result.js";
-import { sanitizeUserFacingText } from "./pi-embedded-helpers/sanitize-user-facing-text.js";
 import { callGatewayTool } from "./tools/gateway.js";
 
 type ExecApprovalFollowupParams = {
@@ -292,20 +292,11 @@ export async function sendExecApprovalFollowup(
       ? normalizedTurnSourceChannel
       : undefined;
 
-  if (isDenied) {
-    if (!sessionKey || shouldSuppressExecDeniedFollowup(sessionKey)) {
-      return false;
-    }
-    return await sendDirectFollowupFallback({
-      approvalId: params.approvalId,
-      deliveryTarget,
-      resultText,
-      sessionError: null,
-      allowDenied: true,
-    });
-  }
-
   let sessionError: unknown = null;
+
+  if (isDenied && (!sessionKey || shouldSuppressExecDeniedFollowup(sessionKey))) {
+    return false;
+  }
 
   if (sessionKey && params.direct !== true) {
     try {
@@ -340,6 +331,24 @@ export async function sendExecApprovalFollowup(
     } catch (err) {
       sessionError = err;
     }
+  }
+
+  if (isDenied) {
+    if (
+      await sendDirectFollowupFallback({
+        approvalId: params.approvalId,
+        deliveryTarget,
+        resultText,
+        sessionError,
+        allowDenied: true,
+      })
+    ) {
+      return true;
+    }
+    if (sessionError) {
+      throw new Error(`Session followup failed: ${formatUnknownError(sessionError)}`);
+    }
+    return false;
   }
 
   if (

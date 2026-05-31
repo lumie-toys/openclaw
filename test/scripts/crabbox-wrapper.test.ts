@@ -1,22 +1,119 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const tempDirs: string[] = [];
 const repoRoot = process.cwd();
+const fakeCrabboxBinDirs = new Map<string, string>();
+const GIT_COMMON_DIR_KEY = "rev-parse\u0000--git-common-dir";
+const GIT_CONFIG_SPARSE_KEY = "config\u0000--bool\u0000core.sparseCheckout";
+const GIT_SPARSE_LIST_KEY = "sparse-checkout\u0000list";
+const GIT_STATUS_PORCELAIN_KEY = "status\u0000--porcelain=v1";
+const GIT_MERGE_BASE_MAIN_HEAD_KEY = "merge-base\u0000origin/main\u0000HEAD";
+const defaultGitResponses: Record<string, { status?: number; stdout?: string; stderr?: string }> = {
+  [GIT_CONFIG_SPARSE_KEY]: { stdout: "false\n" },
+  [GIT_SPARSE_LIST_KEY]: { status: 1 },
+};
 
 function makeFakeCrabbox(helpText: string): string {
+  const cached = fakeCrabboxBinDirs.get(helpText);
+  if (cached) {
+    return cached;
+  }
   const binDir = mkdtempSync(path.join(tmpdir(), "openclaw-fake-crabbox-"));
   tempDirs.push(binDir);
   writeFakeCrabbox(binDir, helpText);
+  fakeCrabboxBinDirs.set(helpText, binDir);
   return binDir;
 }
 
 function writeFakeCrabbox(binDir: string, helpText: string): string {
   mkdirSync(binDir, { recursive: true });
   const crabboxPath = path.join(binDir, "crabbox");
+  const helperPath = path.join(binDir, "fake-crabbox-json.cjs");
+
+  if (process.platform !== "win32") {
+    const script = [
+      "#!/bin/sh",
+      'if [ "$1" = "--version" ]; then',
+      '  printf "%s\\n" "crabbox 0.15.0"',
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "run" ] && [ "$2" = "--help" ]; then',
+      `  printf "%s" ${shellSingleQuote(helpText)}`,
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "config" ] && [ "$2" = "show" ]; then',
+      '  for arg in "$@"; do',
+      '    if [ "$arg" = "--json" ]; then',
+      '      status="${OPENCLAW_FAKE_CRABBOX_CONFIG_STATUS:-0}"',
+      '      if [ "$status" != "0" ]; then',
+      '        printf "%s\\n" "config unavailable" >&2',
+      '        exit "$status"',
+      "      fi",
+      '      if [ -n "${OPENCLAW_FAKE_CRABBOX_CONFIG_JSON+x}" ]; then',
+      '        printf "%s" "$OPENCLAW_FAKE_CRABBOX_CONFIG_JSON"',
+      "      else",
+      '        printf "%s" "{\\"coordinator\\":\\"configured-broker\\",\\"brokerAuth\\":\\"configured\\"}"',
+      "      fi",
+      "      exit 0",
+      "    fi",
+      "  done",
+      "fi",
+      'for arg in "$@"; do',
+      '  if [ "$arg" = "--artifact-glob" ] || [ "$arg" = "-artifact-glob" ]; then',
+      "    mkdir -p .crabbox/runs/run_fake",
+      '    printf "%s\\n" "fake artifact" > .crabbox/runs/run_fake/fake-artifacts.tgz',
+      "  fi",
+      "done",
+      'script_path=""',
+      'previous_arg=""',
+      'for arg in "$@"; do',
+      '  if [ "$previous_arg" = "--script" ] || [ "$previous_arg" = "-script" ]; then',
+      '    script_path="$arg"',
+      "    break",
+      "  fi",
+      '  previous_arg="$arg"',
+      "done",
+      'printf "%s\\0" "__OPENCLAW_FAKE_CRABBOX_V1__"',
+      'printf "%s\\0" "$PWD"',
+      'printf "%s\\0" "$#"',
+      'for arg in "$@"; do',
+      '  printf "%s\\0" "$arg"',
+      "done",
+      'if [ -n "$script_path" ] && [ -f "$script_path" ]; then',
+      '  cat "$script_path"',
+      "fi",
+    ].join("\n");
+    writeFileSync(crabboxPath, `${script}\n`, "utf8");
+    chmodSync(crabboxPath, 0o755);
+    return crabboxPath;
+  }
+
+  const helperScript = [
+    "const args = process.argv.slice(2);",
+    'if (args[0] === "config" && args[1] === "show" && args.includes("--json")) {',
+    "  const status = Number.parseInt(process.env.OPENCLAW_FAKE_CRABBOX_CONFIG_STATUS || '0', 10);",
+    "  if (status !== 0) {",
+    "    process.stderr.write('config unavailable\\n');",
+    "    process.exit(status);",
+    "  }",
+    '  process.stdout.write(process.env.OPENCLAW_FAKE_CRABBOX_CONFIG_JSON || \'{"coordinator":"configured-broker","brokerAuth":"configured"}\');',
+    "  process.exit(0);",
+    "}",
+    "const scriptIndex = args.findIndex((arg) => arg === '--script' || arg === '-script');",
+    "const scriptPath = scriptIndex >= 0 ? args[scriptIndex + 1] : '';",
+    "const scriptContent = scriptPath ? require('node:fs').readFileSync(scriptPath, 'utf8') : '';",
+    "if (args.includes('--artifact-glob') || args.includes('-artifact-glob')) {",
+    "  require('node:fs').mkdirSync('.crabbox/runs/run_fake', { recursive: true });",
+    "  require('node:fs').writeFileSync('.crabbox/runs/run_fake/fake-artifacts.tgz', 'fake artifact\\n');",
+    "}",
+    "console.log(JSON.stringify({ args, cwd: process.cwd(), scriptContent }));",
+  ].join("\n");
+  writeFileSync(helperPath, `${helperScript}\n`, "utf8");
+
   const script = [
     "#!/usr/bin/env node",
     "const args = process.argv.slice(2);",
@@ -28,19 +125,7 @@ function writeFakeCrabbox(binDir: string, helpText: string): string {
     `  process.stdout.write(${JSON.stringify(helpText)});`,
     "  process.exit(0);",
     "}",
-    'if (args[0] === "config" && args[1] === "show" && args.includes("--json")) {',
-    "  const status = Number.parseInt(process.env.OPENCLAW_FAKE_CRABBOX_CONFIG_STATUS || '0', 10);",
-    "  if (status !== 0) {",
-    "    process.stderr.write('config unavailable\\n');",
-    "    process.exit(status);",
-    "  }",
-    "  process.stdout.write(process.env.OPENCLAW_FAKE_CRABBOX_CONFIG_JSON || '{\"coordinator\":\"configured-broker\",\"brokerAuth\":\"configured\"}');",
-    "  process.exit(0);",
-    "}",
-    "const scriptIndex = args.findIndex((arg) => arg === '--script' || arg === '-script');",
-    "const scriptPath = scriptIndex >= 0 ? args[scriptIndex + 1] : '';",
-    "const scriptContent = scriptPath ? require('node:fs').readFileSync(scriptPath, 'utf8') : '';",
-    "console.log(JSON.stringify({ args, cwd: process.cwd(), scriptContent }));",
+    `require(${JSON.stringify(helperPath)});`,
   ].join("\n");
   writeFileSync(crabboxPath, `${script}\n`, "utf8");
   writeFileSync(
@@ -52,12 +137,49 @@ function writeFakeCrabbox(binDir: string, helpText: string): string {
   return crabboxPath;
 }
 
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 function makeFakeGit(
   responses: Record<string, { status?: number; stdout?: string; stderr?: string }>,
 ): string {
   const binDir = mkdtempSync(path.join(tmpdir(), "openclaw-fake-git-"));
   tempDirs.push(binDir);
   const gitPath = path.join(binDir, "git");
+  if (process.platform !== "win32") {
+    const script = [
+      "#!/bin/sh",
+      'if [ "$1" = "worktree" ] && [ "$2" = "add" ]; then',
+      '  mkdir -p "$4"',
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "-C" ] && [ "$3" = "sparse-checkout" ] && [ "$4" = "disable" ]; then',
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "-C" ] && [ "$3" = "reset" ] && [ "$4" = "--mixed" ]; then',
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then',
+      "  exit 0",
+      "fi",
+      ...Object.entries(responses).flatMap(([key, response]) => {
+        const args = key.split("\u0000");
+        return [
+          `if ${shellArgListCondition(args)}; then`,
+          response.stdout ? `  printf "%s" ${shellSingleQuote(response.stdout)}` : "",
+          response.stderr ? `  printf "%s" ${shellSingleQuote(response.stderr)} >&2` : "",
+          `  exit ${response.status ?? 0}`,
+          "fi",
+        ].filter(Boolean);
+      }),
+      "exit 1",
+    ].join("\n");
+    writeFileSync(gitPath, `${script}\n`, "utf8");
+    chmodSync(gitPath, 0o755);
+    return binDir;
+  }
+
   const script = [
     "#!/usr/bin/env node",
     "const fs = require('node:fs');",
@@ -80,6 +202,14 @@ function makeFakeGit(
   return binDir;
 }
 
+function shellArgListCondition(args: string[]): string {
+  const checks = [`[ "$#" -eq ${args.length} ]`];
+  for (const [index, arg] of args.entries()) {
+    checks.push(`[ "$${index + 1}" = ${shellSingleQuote(arg)} ]`);
+  }
+  return checks.join(" && ");
+}
+
 function runWrapper(
   helpText: string,
   args: string[],
@@ -93,7 +223,8 @@ function runWrapper(
   } = {},
 ) {
   const binDir = makeFakeCrabbox(helpText);
-  const gitBinDir = options.gitResponses ? makeFakeGit(options.gitResponses) : "";
+  const gitResponses = { ...defaultGitResponses, ...options.gitResponses };
+  const gitBinDir = makeFakeGit(gitResponses);
   return spawnSync(process.execPath, ["scripts/crabbox-wrapper.mjs", ...args], {
     cwd: repoRoot,
     encoding: "utf8",
@@ -103,6 +234,7 @@ function runWrapper(
       PATH: [...(options.extraPathEntries ?? []), binDir, gitBinDir, process.env.PATH ?? ""]
         .filter(Boolean)
         .join(path.delimiter),
+      CRABBOX_PROVIDER: "",
       OPENCLAW_CRABBOX_WRAPPER_IGNORE_REPO_BINARY: "1",
       ...(options.configJson
         ? { OPENCLAW_FAKE_CRABBOX_CONFIG_JSON: JSON.stringify(options.configJson) }
@@ -110,10 +242,8 @@ function runWrapper(
       ...(options.configStatus
         ? { OPENCLAW_FAKE_CRABBOX_CONFIG_STATUS: String(options.configStatus) }
         : {}),
-      ...(options.env ?? {}),
-      ...(options.gitResponses
-        ? { OPENCLAW_FAKE_GIT_RESPONSES: JSON.stringify(options.gitResponses) }
-        : {}),
+      ...options.env,
+      OPENCLAW_FAKE_GIT_RESPONSES: JSON.stringify(gitResponses),
     },
     timeout: 10_000,
   });
@@ -124,6 +254,24 @@ function parseFakeCrabboxOutput(result: ReturnType<typeof runWrapper>): {
   cwd: string;
   scriptContent?: string;
 } {
+  const marker = "__OPENCLAW_FAKE_CRABBOX_V1__\0";
+  if (result.stdout.startsWith(marker)) {
+    let offset = marker.length;
+    const readField = () => {
+      const end = result.stdout.indexOf("\0", offset);
+      if (end < 0) {
+        throw new Error("missing fake Crabbox output field terminator");
+      }
+      const value = result.stdout.slice(offset, end);
+      offset = end + 1;
+      return value;
+    };
+    const cwd = readField();
+    const argCount = Number.parseInt(readField(), 10);
+    const args = Array.from({ length: argCount }, () => readField());
+    const scriptContent = result.stdout.slice(offset);
+    return { args, cwd, scriptContent };
+  }
   return JSON.parse(result.stdout.trim()) as {
     args: string[];
     cwd: string;
@@ -142,13 +290,15 @@ function expectGroupedShellCommand(remoteCommand: string, command: string): void
   }
 }
 
-afterEach(() => {
+afterAll(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-describe("scripts/crabbox-wrapper", () => {
+describe.concurrent("scripts/crabbox-wrapper", () => {
+  const azureProviderHelp =
+    "provider: hetzner, aws, azure, local-container, blacksmith-testbox, or cloudflare\n";
   const advertisedProviderAliasHelp = [
     "provider: hetzner, aws, gcp, local-container, blacksmith-testbox,",
     "  namespace-devbox, runpod, semaphore, cloudflare, railway, exe-dev, or ssh",
@@ -185,7 +335,23 @@ describe("scripts/crabbox-wrapper", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('"local-container"');
+    expect(parseFakeCrabboxOutput(result).args).toContain("local-container");
+  });
+
+  it("only forces the short local-container Docker work root on Linux", () => {
+    const result = runWrapper(
+      "provider: hetzner, aws, local-container, blacksmith-testbox, or cloudflare\n",
+      ["run", "--provider", "local-container", "--", "echo ok"],
+    );
+
+    expect(result.status).toBe(0);
+    const expectedMessage =
+      "[crabbox] provider=docker using short host-visible work root for OpenClaw Docker tests";
+    if (process.platform === "linux") {
+      expect(result.stderr).toContain(expectedMessage);
+    } else {
+      expect(result.stderr).not.toContain(expectedMessage);
+    }
   });
 
   it("defaults AWS macOS runs to on-demand capacity", () => {
@@ -205,6 +371,113 @@ describe("scripts/crabbox-wrapper", () => {
       "on-demand",
       "--",
       "echo ok",
+    ]);
+  });
+
+  it("prefers Azure for unqualified Windows runs", () => {
+    const result = runWrapper(azureProviderHelp, [
+      "run",
+      "--target",
+      "windows",
+      "--windows-mode",
+      "wsl2",
+      "--",
+      "corepack",
+      "pnpm",
+      "check:changed",
+    ]);
+
+    expect(result.status).toBe(0);
+    expect(parseFakeCrabboxOutput(result).args).toEqual([
+      "run",
+      "--target",
+      "windows",
+      "--windows-mode",
+      "wsl2",
+      "--provider",
+      "azure",
+      "--",
+      "corepack",
+      "pnpm",
+      "check:changed",
+    ]);
+    expect(result.stderr).toContain("provider=azure");
+  });
+
+  it("keeps explicit provider env overrides for Windows runs", () => {
+    const result = runWrapper(azureProviderHelp, ["run", "--target", "windows", "--", "echo ok"], {
+      env: { CRABBOX_PROVIDER: "aws" },
+    });
+
+    expect(result.status).toBe(0);
+    expect(parseFakeCrabboxOutput(result).args).toEqual([
+      "run",
+      "--target",
+      "windows",
+      "--",
+      "echo ok",
+    ]);
+    expect(result.stderr).toContain("provider=aws");
+  });
+
+  it("keeps the AWS provider env for Windows runs when Azure is unavailable", () => {
+    const result = runWrapper(
+      "provider: hetzner, aws, local-container, blacksmith-testbox, or cloudflare\n",
+      ["run", "--target", "windows", "--", "echo ok"],
+      {
+        env: {
+          CRABBOX_PROVIDER: "aws",
+          OPENCLAW_CRABBOX_ALLOW_DIRECT_AWS: "1",
+        },
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(parseFakeCrabboxOutput(result).args).toEqual([
+      "run",
+      "--target",
+      "windows",
+      "--",
+      "echo ok",
+    ]);
+    expect(result.stderr).toContain("provider=aws");
+  });
+
+  it("keeps existing Windows lease selections on the configured provider", () => {
+    const result = runWrapper(
+      azureProviderHelp,
+      ["run", "--id", "cbx_existing", "--target", "windows", "--", "echo ok"],
+      {
+        env: {
+          CRABBOX_PROVIDER: "aws",
+          OPENCLAW_CRABBOX_ALLOW_DIRECT_AWS: "1",
+        },
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(parseFakeCrabboxOutput(result).args).toEqual([
+      "run",
+      "--id",
+      "cbx_existing",
+      "--target",
+      "windows",
+      "--",
+      "echo ok",
+    ]);
+    expect(result.stderr).toContain("provider=aws");
+  });
+
+  it("prefers Azure for unqualified Windows warmups", () => {
+    const result = runWrapper(azureProviderHelp, ["warmup", "--target", "windows"]);
+
+    expect(result.status).toBe(0);
+    expect(parseFakeCrabboxOutput(result).args).toEqual([
+      "warmup",
+      "--target",
+      "windows",
+      "--provider",
+      "azure",
     ]);
   });
 
@@ -397,7 +670,7 @@ describe("scripts/crabbox-wrapper", () => {
     expect(remoteCommand).toContain("openclaw_crabbox_env");
     expect(remoteCommand).not.toContain("export -f env openclaw_crabbox_env");
     expect(remoteCommand).not.toContain('env() { openclaw_crabbox_env "$@"; };');
-    expect(remoteCommand).toContain('PATH=$PATH:${1#PATH=}');
+    expect(remoteCommand).toContain("PATH=$PATH:${1#PATH=}");
     expect(remoteCommand).toContain("pnpm --version >&2");
     expectGroupedShellCommand(
       remoteCommand,
@@ -429,8 +702,8 @@ describe("scripts/crabbox-wrapper", () => {
     const remoteCommand = normalizeShellLineEndings(output.args.at(-1) ?? "");
     expect(result.status).toBe(0);
     expect(remoteCommand).toContain("openclaw_crabbox_bootstrap_macos_js");
-    expect(remoteCommand).toContain('-u|--unset|-C|--chdir)');
-    expect(remoteCommand).toContain('-i|--ignore-environment)');
+    expect(remoteCommand).toContain("-u|--unset|-C|--chdir)");
+    expect(remoteCommand).toContain("-i|--ignore-environment)");
     expect(remoteCommand).toContain("pnpm --version >&2");
     expectGroupedShellCommand(
       remoteCommand,
@@ -518,7 +791,7 @@ describe("scripts/crabbox-wrapper", () => {
   });
 
   it("does not shadow unrelated env calls in AWS macOS shell commands", () => {
-    const shellScript = 'node --version; env -i PATH=/usr/bin:/bin printenv PATH';
+    const shellScript = "node --version; env -i PATH=/usr/bin:/bin printenv PATH";
     const result = runWrapper(
       "provider: hetzner, aws, local-container, blacksmith-testbox, or cloudflare\n",
       ["run", "--provider", "aws", "--target", "macos", "--shell", "--", shellScript],
@@ -536,18 +809,7 @@ describe("scripts/crabbox-wrapper", () => {
   it("does not bootstrap env split-string commands after ignore-environment", () => {
     const result = runWrapper(
       "provider: hetzner, aws, local-container, blacksmith-testbox, or cloudflare\n",
-      [
-        "run",
-        "--provider",
-        "aws",
-        "--target",
-        "macos",
-        "--",
-        "env",
-        "-i",
-        "-S",
-        "pnpm --version",
-      ],
+      ["run", "--provider", "aws", "--target", "macos", "--", "env", "-i", "-S", "pnpm --version"],
     );
 
     const output = parseFakeCrabboxOutput(result);
@@ -1168,7 +1430,7 @@ describe("scripts/crabbox-wrapper", () => {
       mkdirSync(gitCommonDir, { recursive: true });
       writeFakeCrabbox(crabboxBinDir, "provider: aws\n");
       const gitResponses = {
-        ["rev-parse\u0000--git-common-dir"]: { stdout: `${gitCommonDir}\n` },
+        [GIT_COMMON_DIR_KEY]: { stdout: `${gitCommonDir}\n` },
       };
       const gitBinDir = makeFakeGit(gitResponses);
 
@@ -1203,7 +1465,7 @@ describe("scripts/crabbox-wrapper", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('"docker"');
+    expect(parseFakeCrabboxOutput(result).args).toContain("docker");
     expect(result.stderr).toContain(
       "providers=hetzner,aws,local-container,blacksmith-testbox,docker,cloudflare",
     );
@@ -1239,9 +1501,9 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "aws", "--", "echo ok"],
       {
         gitResponses: {
-          ["rev-parse\u0000--git-common-dir"]: { status: 1 },
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { status: 1 },
-          ["sparse-checkout\u0000list"]: { status: 1 },
+          [GIT_COMMON_DIR_KEY]: { status: 1 },
+          [GIT_CONFIG_SPARSE_KEY]: { status: 1 },
+          [GIT_SPARSE_LIST_KEY]: { status: 1 },
         },
       },
     );
@@ -1262,7 +1524,7 @@ describe("scripts/crabbox-wrapper", () => {
       ]);
 
       expect(result.status, alias).toBe(0);
-      expect(result.stdout).toContain(`"${alias}"`);
+      expect(parseFakeCrabboxOutput(result).args).toContain(alias);
     },
   );
 
@@ -1277,7 +1539,7 @@ describe("scripts/crabbox-wrapper", () => {
       const result = runWrapper(helpText, ["run", "--provider", provider, "--", "echo ok"]);
 
       expect(result.status, provider).toBe(0);
-      expect(result.stdout).toContain(`"${provider}"`);
+      expect(parseFakeCrabboxOutput(result).args).toContain(provider);
     }
   });
 
@@ -1319,14 +1581,14 @@ describe("scripts/crabbox-wrapper", () => {
       ],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
         },
       },
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout).not.toContain('"--no-sync"');
+    expect(parseFakeCrabboxOutput(result).args).not.toContain("--no-sync");
     expect(result.stderr).toContain("syncing from temporary full checkout");
     expect(parseFakeCrabboxOutput(result).cwd).toContain("openclaw-crabbox-sync-");
   });
@@ -1337,8 +1599,8 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "aws", "--", "corepack", "pnpm", "check:changed"],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
         },
       },
     );
@@ -1346,6 +1608,9 @@ describe("scripts/crabbox-wrapper", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toContain("syncing from temporary full checkout");
     expect(result.stderr).toContain("overlaying local HEAD as worktree changes from origin/main");
+    expect(parseFakeCrabboxOutput(result).args.join(" ")).toContain(
+      "if ! git status --short >/dev/null 2>&1; then rm -rf .git;",
+    );
     expect(parseFakeCrabboxOutput(result).cwd).toContain("openclaw-crabbox-sync-");
   });
 
@@ -1367,8 +1632,8 @@ describe("scripts/crabbox-wrapper", () => {
       ],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
         },
       },
     );
@@ -1384,9 +1649,9 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "aws", "--", "corepack", "pnpm", "check:changed"],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1412,9 +1677,9 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "aws", "--target", "macos", "--", "pnpm", "check:changed"],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1437,9 +1702,9 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "aws", "--target", "macos", "--shell", "--", shellScript],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1460,9 +1725,9 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "aws", "--target", "macos", "--shell", "--", shellScript],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1482,9 +1747,9 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "aws", "--shell", "--", shellScript],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1503,9 +1768,9 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "aws", "--shell", "--", shellScript],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1525,9 +1790,9 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "aws", "--shell", "--", shellScript],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1549,9 +1814,9 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "aws", "--shell", "--", shellScript],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1570,9 +1835,9 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "aws", "--shell", "--", shellScript],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1591,9 +1856,9 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "aws", "--shell", "--", shellScript],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1612,9 +1877,9 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "aws", "--shell", "--", shellScript],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1634,9 +1899,9 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "aws", "--shell", "--", shellScript],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1670,9 +1935,9 @@ describe("scripts/crabbox-wrapper", () => {
       ],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1690,22 +1955,12 @@ describe("scripts/crabbox-wrapper", () => {
   it("preserves sparse changed-gate Git bootstrap for direct timeout-wrapped shell commands", () => {
     const result = runWrapper(
       "provider: hetzner, aws, local-container, blacksmith-testbox, or cloudflare\n",
-      [
-        "run",
-        "--provider",
-        "aws",
-        "--",
-        "timeout",
-        "1200s",
-        "bash",
-        "-lc",
-        "pnpm check:changed",
-      ],
+      ["run", "--provider", "aws", "--", "timeout", "1200s", "bash", "-lc", "pnpm check:changed"],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1731,9 +1986,9 @@ describe("scripts/crabbox-wrapper", () => {
       ],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1757,9 +2012,9 @@ describe("scripts/crabbox-wrapper", () => {
       ],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1783,9 +2038,9 @@ describe("scripts/crabbox-wrapper", () => {
       ],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1843,9 +2098,9 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "aws", "--shell", "--", "env CI=1 pnpm check:changed"],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1876,9 +2131,9 @@ describe("scripts/crabbox-wrapper", () => {
       ],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
-          ["merge-base\u0000origin/main\u0000HEAD"]: { stdout: "abc123\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+          [GIT_MERGE_BASE_MAIN_HEAD_KEY]: { stdout: "abc123\n" },
         },
       },
     );
@@ -1899,21 +2154,21 @@ describe("scripts/crabbox-wrapper", () => {
     ]);
   });
 
-  it("keeps clean sparse local-container syncs on the original checkout", () => {
+  it("uses a temporary full checkout when local-container syncs clean sparse worktrees", () => {
     const result = runWrapper(
       "provider: hetzner, aws, local-container, blacksmith-testbox, or cloudflare\n",
       ["run", "--provider", "local-container", "--", "echo ok"],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
         },
       },
     );
 
     expect(result.status).toBe(0);
-    expect(result.stderr).not.toContain("syncing from temporary full checkout");
-    expect(parseFakeCrabboxOutput(result).cwd).toBe(repoRoot);
+    expect(result.stderr).toContain("syncing from temporary full checkout");
+    expect(parseFakeCrabboxOutput(result).cwd).toContain("openclaw-crabbox-sync-");
   });
 
   it("uses a temporary full checkout when existing AWS leases sync clean sparse worktrees", () => {
@@ -1922,8 +2177,8 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "aws", "--id", "cbx_existing", "--", "echo ok"],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
         },
       },
     );
@@ -1939,14 +2194,14 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "blacksmith-testbox", "--blacksmith-ref", "main", "--", "echo ok"],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
         },
       },
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout).not.toContain('"--no-sync"');
+    expect(parseFakeCrabboxOutput(result).args).not.toContain("--no-sync");
     expect(result.stderr).toContain("syncing from temporary full checkout");
     expect(parseFakeCrabboxOutput(result).cwd).toContain("openclaw-crabbox-sync-");
   });
@@ -1957,8 +2212,8 @@ describe("scripts/crabbox-wrapper", () => {
       ["run", "--provider", "blacksmith-testbox", "--blacksmith-ref", "main", "--", "echo ok"],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: " M scripts/crabbox-wrapper.mjs\n" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: " M scripts/crabbox-wrapper.mjs\n" },
         },
       },
     );
@@ -1987,8 +2242,8 @@ describe("scripts/crabbox-wrapper", () => {
       ],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
         },
       },
     );
@@ -2001,6 +2256,40 @@ describe("scripts/crabbox-wrapper", () => {
     );
     expect(output.args).toContain(path.join(repoRoot, ".artifacts/stderr.log"));
     expect(output.args).toContain(`/tmp/proof=${path.join(repoRoot, ".artifacts/proof")}`);
+  });
+
+  it("preserves artifact-glob downloads from temporary sparse-sync checkouts", () => {
+    const preservedDir = path.join(repoRoot, ".crabbox", "runs", "run_fake");
+    rmSync(preservedDir, { recursive: true, force: true });
+
+    const result = runWrapper(
+      "provider: hetzner, aws, local-container, blacksmith-testbox, or cloudflare\n",
+      [
+        "run",
+        "--provider",
+        "blacksmith-testbox",
+        "--blacksmith-ref",
+        "main",
+        "--artifact-glob",
+        ".artifacts/proof/**",
+        "--",
+        "echo ok",
+      ],
+      {
+        gitResponses: {
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
+        },
+      },
+    );
+
+    const output = parseFakeCrabboxOutput(result);
+    expect(result.status).toBe(0);
+    expect(output.cwd).toContain("openclaw-crabbox-sync-");
+    expect(result.stderr).toContain("syncing from temporary full checkout");
+    expect(result.stderr).toContain("preserved");
+    expect(statSync(path.join(preservedDir, "fake-artifacts.tgz")).isFile()).toBe(true);
+    rmSync(preservedDir, { recursive: true, force: true });
   });
 
   it("uses the temporary full checkout for sparse sync-only runs", () => {
@@ -2016,8 +2305,8 @@ describe("scripts/crabbox-wrapper", () => {
       ],
       {
         gitResponses: {
-          ["config\u0000--bool\u0000core.sparseCheckout"]: { stdout: "true\n" },
-          ["status\u0000--porcelain=v1"]: { stdout: "" },
+          [GIT_CONFIG_SPARSE_KEY]: { stdout: "true\n" },
+          [GIT_STATUS_PORCELAIN_KEY]: { stdout: "" },
         },
       },
     );
