@@ -1,3 +1,4 @@
+// Agent Core module implements compaction behavior.
 import type {
   AssistantMessage,
   Context,
@@ -401,9 +402,9 @@ export function findCutPoint(
     const messageTokens = estimateTokens(entry.message);
     accumulatedTokens += messageTokens;
     if (accumulatedTokens >= keepRecentTokens) {
-      for (let c = 0; c < cutPoints.length; c++) {
-        if (cutPoints[c] >= i) {
-          cutIndex = cutPoints[c];
+      for (const cutPoint of cutPoints) {
+        if (cutPoint >= i) {
+          cutIndex = cutPoint;
           break;
         }
       }

@@ -1,14 +1,18 @@
+// Workspace skill loading helpers discover and load skills from workspace directories.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import {
+  normalizeTrimmedStringList,
+  uniqueStrings,
+} from "@openclaw/normalization-core/string-normalization";
 import { resolveSandboxPath } from "../../agents/sandbox-paths.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { walkDirectorySync } from "../../infra/fs-safe.js";
 import { resolveOsHomeDir } from "../../infra/home-dir.js";
 import { isPathInside } from "../../infra/path-guards.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
-import { normalizeOptionalString } from "../../shared/string-coerce.js";
-import { normalizeTrimmedStringList, uniqueStrings } from "../../shared/string-normalization.js";
 import { CONFIG_DIR, resolveHomeDir, resolveUserPath } from "../../utils.js";
 import {
   resolveEffectiveAgentSkillFilter,
@@ -60,12 +64,12 @@ function resolveNativeUserHomeDir(): string | undefined {
 
 function resolveCompactHomePrefixes(): string[] {
   const homes = [resolveHomeDir(), resolveUserHomeDir(), resolveNativeUserHomeDir()].filter(
-    (home): home is string => !!home,
+    (home): home is string => Boolean(home),
   );
   const resolvedHomes = homes.map((home) => path.resolve(home));
   const realHomes = resolvedHomes
     .map((home) => tryRealpath(home))
-    .filter((home): home is string => !!home);
+    .filter((home): home is string => Boolean(home));
   return uniqueStrings([...resolvedHomes, ...realHomes]).toSorted((a, b) => b.length - a.length);
 }
 
@@ -288,8 +292,7 @@ function containsDiscoverableSkill(
 ): boolean {
   const discoveryBudget = createSkillDiscoveryBudget(opts.maxCandidateDirs);
   const queue: Array<{ dir: string; depth: number }> = [{ dir, depth: 0 }];
-  for (let index = 0; index < queue.length; index += 1) {
-    const candidate = queue[index];
+  for (const candidate of queue) {
     if (!candidate) {
       continue;
     }
@@ -369,7 +372,7 @@ function hasLoadableSkillFrontmatter(
   });
   const fallbackName = path.basename(skillDir).trim();
   const name = frontmatter?.name?.trim() || fallbackName;
-  return !!name && !!frontmatter?.description?.trim();
+  return Boolean(name) && Boolean(frontmatter?.description?.trim());
 }
 
 function tryRealpath(filePath: string): string | null {
@@ -517,8 +520,7 @@ export function resolveNestedSkillsRoot(
   // child-directory filter as discovery so ignored folders cannot re-root.
   const discoveryBudget = createSkillDiscoveryBudget(scanLimit);
   const queue: Array<{ dir: string; depth: number }> = [{ dir: nested, depth: 0 }];
-  for (let index = 0; index < queue.length; index += 1) {
-    const candidate = queue[index];
+  for (const candidate of queue) {
     if (!candidate) {
       continue;
     }
@@ -851,6 +853,7 @@ function loadSkillEntries(
     managedSkillsDir?: string;
     bundledSkillsDir?: string;
     pluginSkillsDir?: string;
+    workspaceOnly?: boolean;
   },
 ): SkillEntry[] {
   const limits = resolveSkillsLimits(opts?.config, opts?.agentId);
@@ -996,8 +999,7 @@ function loadSkillEntries(
       }),
     );
 
-    for (let queueIndex = 0; queueIndex < scanQueue.length; queueIndex += 1) {
-      const candidate = scanQueue[queueIndex];
+    for (const candidate of scanQueue) {
       if (!candidate) {
         continue;
       }
@@ -1111,17 +1113,22 @@ function loadSkillEntries(
     return loadedSkills;
   };
 
+  const workspaceOnly = opts?.workspaceOnly === true;
   const managedSkillsDir = opts?.managedSkillsDir ?? path.join(CONFIG_DIR, "skills");
   const workspaceSkillsDir = path.resolve(workspaceDir, "skills");
-  const bundledSkillsDir = opts?.bundledSkillsDir ?? resolveBundledSkillsDir();
+  const bundledSkillsDir = workspaceOnly
+    ? undefined
+    : (opts?.bundledSkillsDir ?? resolveBundledSkillsDir());
   const pluginSkillsDir = opts?.pluginSkillsDir ?? path.join(CONFIG_DIR, "plugin-skills");
-  const extraDirsRaw = opts?.config?.skills?.load?.extraDirs ?? [];
+  const extraDirsRaw = workspaceOnly ? [] : (opts?.config?.skills?.load?.extraDirs ?? []);
   const extraDirs = normalizeTrimmedStringList(extraDirsRaw);
-  const pluginSkillDirs = resolvePluginSkillDirs({
-    workspaceDir,
-    config: opts?.config,
-    pluginSkillsDir,
-  });
+  const pluginSkillDirs = workspaceOnly
+    ? []
+    : resolvePluginSkillDirs({
+        workspaceDir,
+        config: opts?.config,
+        pluginSkillsDir,
+      });
   const mergedExtraDirs = [...extraDirs, ...pluginSkillDirs];
 
   const bundledSkills = bundledSkillsDir
@@ -1145,23 +1152,29 @@ function loadSkillEntries(
       limits,
     }),
   ];
-  const managedSkills = loadSkills({
-    dir: managedSkillsDir,
-    source: "openclaw-managed",
-  });
+  const managedSkills = workspaceOnly
+    ? []
+    : loadSkills({
+        dir: managedSkillsDir,
+        source: "openclaw-managed",
+      });
   const osHomeDir = resolveUserHomeDir();
   const personalAgentsSkillsDir = osHomeDir
     ? path.resolve(osHomeDir, ".agents", "skills")
     : path.resolve(".agents", "skills");
-  const personalAgentsSkills = loadSkills({
-    dir: personalAgentsSkillsDir,
-    source: "agents-skills-personal",
-  });
+  const personalAgentsSkills = workspaceOnly
+    ? []
+    : loadSkills({
+        dir: personalAgentsSkillsDir,
+        source: "agents-skills-personal",
+      });
   const projectAgentsSkillsDir = path.resolve(workspaceDir, ".agents", "skills");
-  const projectAgentsSkills = loadSkills({
-    dir: projectAgentsSkillsDir,
-    source: "agents-skills-project",
-  });
+  const projectAgentsSkills = workspaceOnly
+    ? []
+    : loadSkills({
+        dir: projectAgentsSkillsDir,
+        source: "agents-skills-project",
+      });
   const workspaceSkills = loadSkills({
     dir: workspaceSkillsDir,
     source: "openclaw-workspace",
@@ -1424,6 +1437,7 @@ export function resolveSkillsPromptForRun(params: {
   config?: OpenClawConfig;
   workspaceDir: string;
   agentId?: string;
+  eligibility?: SkillEligibilityContext;
 }): string {
   const snapshotPrompt = params.skillsSnapshot?.prompt?.trim();
   if (snapshotPrompt) {
@@ -1434,6 +1448,7 @@ export function resolveSkillsPromptForRun(params: {
       entries: params.entries,
       config: params.config,
       agentId: params.agentId,
+      eligibility: params.eligibility,
     });
     return prompt.trim() ? prompt : "";
   }
@@ -1450,11 +1465,12 @@ export function loadWorkspaceSkillEntries(
     skillFilter?: string[];
     agentId?: string;
     eligibility?: SkillEligibilityContext;
+    workspaceOnly?: boolean;
   },
 ): SkillEntry[] {
   const entries = loadSkillEntries(workspaceDir, opts);
   const effectiveSkillFilter = resolveEffectiveWorkspaceSkillFilter(opts);
-  if (effectiveSkillFilter === undefined) {
+  if (effectiveSkillFilter === undefined && opts?.eligibility === undefined) {
     return entries;
   }
   return filterSkillEntries(entries, opts?.config, effectiveSkillFilter, opts?.eligibility);
@@ -1517,6 +1533,29 @@ function resolveSyncedSkillDestinationPath(params: {
   }).resolved;
 }
 
+async function prepareSyncedSkillsDirectory(targetSkillsDir: string): Promise<void> {
+  let stats: fs.Stats;
+  try {
+    stats = await fsp.lstat(targetSkillsDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+    await fsp.mkdir(targetSkillsDir, { recursive: true });
+    return;
+  }
+
+  if (!stats.isDirectory() || stats.isSymbolicLink()) {
+    await fsp.rm(targetSkillsDir, { recursive: true, force: true });
+    await fsp.mkdir(targetSkillsDir, { recursive: true });
+    return;
+  }
+
+  for (const entry of await fsp.readdir(targetSkillsDir)) {
+    await fsp.rm(path.join(targetSkillsDir, entry), { recursive: true, force: true });
+  }
+}
+
 export async function syncSkillsToWorkspace(params: {
   sourceWorkspaceDir: string;
   targetWorkspaceDir: string;
@@ -1547,12 +1586,11 @@ export async function syncSkillsToWorkspace(params: {
       pluginSkillsDir: params.pluginSkillsDir,
     });
 
-    await fsp.rm(targetSkillsDir, { recursive: true, force: true });
-    await fsp.mkdir(targetSkillsDir, { recursive: true });
+    await prepareSyncedSkillsDirectory(targetSkillsDir);
 
     const usedDirNames = new Set<string>();
     for (const entry of entries) {
-      let dest: string | null = null;
+      let dest: string | null;
       try {
         dest = resolveSyncedSkillDestinationPath({
           targetSkillsDir,

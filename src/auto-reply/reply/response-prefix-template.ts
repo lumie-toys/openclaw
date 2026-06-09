@@ -1,4 +1,5 @@
-import { normalizeLowercaseStringOrEmpty } from "../../shared/string-coerce.js";
+// Resolves response-prefix templates for channel and sender scoped replies.
+import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 
 /**
  * Template interpolation for response prefix.

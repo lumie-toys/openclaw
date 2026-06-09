@@ -1,3 +1,4 @@
+// Mcp Websocket Open script supports OpenClaw repository automation.
 type WebSocketOpenHandle = {
   close?: () => void;
   off?: (event: "open" | "error" | "close", listener: (...args: unknown[]) => void) => void;
@@ -29,7 +30,6 @@ export function waitForWebSocketOpen(
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     let settled = false;
-    let timer: ReturnType<typeof setTimeout>;
 
     const cleanup = () => {
       clearTimeout(timer);
@@ -62,7 +62,7 @@ export function waitForWebSocketOpen(
       const suffix = closeDetails ? `: ${closeDetails}` : "";
       rejectOpen(new Error(`closed before open${suffix}`));
     };
-    timer = setTimeout(() => {
+    const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
       const consumeAbortError = () => {};
       const removeAbortErrorConsumer = () => {
         ws.off?.("error", consumeAbortError);

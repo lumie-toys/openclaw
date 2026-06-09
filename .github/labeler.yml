@@ -132,6 +132,11 @@
       - any-glob-to-any-file:
           - "extensions/slack/**"
           - "docs/channels/slack.md"
+"channel: sms":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/sms/**"
+          - "docs/channels/sms.md"
 "channel: synology-chat":
   - changed-files:
       - any-glob-to-any-file:
@@ -569,6 +574,10 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/openshell/**"
+"extensions: parallel":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/parallel/**"
 "extensions: perplexity":
   - changed-files:
       - any-glob-to-any-file:

@@ -1,3 +1,7 @@
+/**
+ * Manages active embedded-agent run handles, queues, aborts, and waiters.
+ */
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
   abortActiveReplyRuns,
   abortReplyRunBySessionId,
@@ -18,7 +22,7 @@ import {
   logSessionStateChange,
   updateDiagnosticSessionFile,
 } from "../../logging/diagnostic.js";
-import { normalizeOptionalString } from "../../shared/string-coerce.js";
+import { resolveTimerTimeoutMs } from "../../shared/number-coercion.js";
 import {
   ACTIVE_EMBEDDED_RUNS,
   ACTIVE_EMBEDDED_RUN_SESSION_IDS_BY_FILE,
@@ -616,7 +620,7 @@ export async function waitForActiveEmbeddedRuns(
   opts?: { pollMs?: number },
 ): Promise<{ drained: boolean }> {
   const pollMsRaw = opts?.pollMs ?? 250;
-  const pollMs = Math.max(10, Math.floor(pollMsRaw));
+  const pollMs = resolveTimerTimeoutMs(pollMsRaw, 250, 10);
   if (timeoutMs !== undefined && timeoutMs <= 0) {
     return { drained: getActiveEmbeddedRunCount() === 0 };
   }
@@ -637,7 +641,9 @@ export async function waitForActiveEmbeddedRuns(
       );
       return { drained: false };
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, pollMs));
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, pollMs);
+    });
   }
 }
 
@@ -665,7 +671,7 @@ export function waitForEmbeddedAgentRunEnd(
           diag.warn(`wait timeout: sessionId=${sessionId} timeoutMs=${timeoutMs}`);
           resolve(false);
         },
-        Math.max(100, timeoutMs),
+        resolveTimerTimeoutMs(timeoutMs, 100, 100),
       ),
     };
     waiters.add(waiter);

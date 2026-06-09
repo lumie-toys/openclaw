@@ -1,3 +1,4 @@
+// Covers model catalog loading, plugin manifests, normalization, and suppression.
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
@@ -17,7 +18,7 @@ let augmentCatalogMock: ReturnType<typeof vi.fn>;
 let ensureOpenClawModelsJsonMock: ReturnType<typeof vi.fn>;
 let currentPluginMetadataSnapshotMock: ReturnType<typeof vi.fn<(...args: unknown[]) => unknown>>;
 let loadPluginMetadataSnapshotMock: ReturnType<typeof vi.fn<(...args: unknown[]) => unknown>>;
-let readFileMock: ReturnType<typeof vi.fn>;
+let readFileMock: ReturnType<typeof vi.fn<(pathname: string) => Promise<string>>>;
 
 vi.mock("./model-suppression.runtime.js", () => ({
   shouldSuppressBuiltInModel: (params: { provider?: string; id?: string }) =>
@@ -38,6 +39,8 @@ function isSuppressedModel(provider?: string, id?: string): boolean {
 }
 
 function mockCatalogImportFailThenRecover() {
+  // Simulates a transient discovery import failure so cache/error handling can
+  // prove the catalog loader recovers on the next attempt.
   let call = 0;
   setModelCatalogImportForTest(async () => {
     call += 1;
@@ -138,6 +141,8 @@ function manifestModelCatalogSnapshot(model: {
   reasoning?: boolean;
   contextWindow?: number;
 }) {
+  // Minimal plugin metadata snapshot containing a manifest-owned external
+  // provider model catalog.
   return {
     policyHash: "policy",
     index: {
@@ -205,6 +210,8 @@ function requireCatalogEntry(
   provider: string,
   id: string,
 ): ModelCatalogEntry {
+  // Most catalog tests need a narrowed entry before checking capabilities or
+  // normalized ids; fail loudly when the fixture model disappears.
   const entry = findCatalogEntry(entries, provider, id);
   if (!entry) {
     throw new Error(`expected catalog entry ${provider}/${id}`);
@@ -229,7 +236,8 @@ function requireMockCallParam(
 
 describe("loadModelCatalog", () => {
   beforeAll(async () => {
-    readFileMock = vi.fn();
+    vi.resetModules();
+    readFileMock = vi.fn<(pathname: string) => Promise<string>>();
     vi.doMock("node:fs/promises", async (importOriginal) => ({
       ...(await importOriginal<typeof import("node:fs/promises")>()),
       readFile: readFileMock,
@@ -240,7 +248,7 @@ describe("loadModelCatalog", () => {
     }));
     vi.doMock("./agent-scope.js", () => ({
       resolveAgentWorkspaceDir: (cfg: OpenClawConfig, agentId: string) => {
-        const entry = cfg.agents?.list?.find((entry) => entry.id === agentId);
+        const entry = cfg.agents?.list?.find((entryEntry) => entryEntry.id === agentId);
         return entry?.workspace ?? cfg.agents?.defaults?.workspace ?? "/tmp/openclaw-workspace";
       },
       resolveDefaultAgentDir: () => "/tmp/openclaw",
@@ -258,6 +266,25 @@ describe("loadModelCatalog", () => {
     vi.doMock("../plugins/plugin-metadata-snapshot.js", () => ({
       loadPluginMetadataSnapshot: loadPluginMetadataSnapshotMock,
       resolvePluginMetadataSnapshot: (...args: unknown[]) =>
+        currentPluginMetadataSnapshotMock(...args) ?? loadPluginMetadataSnapshotMock(...args),
+    }));
+    vi.doMock("../plugins/manifest-contract-eligibility.js", () => ({
+      isManifestPluginAvailableForControlPlane: ({
+        plugin,
+        snapshot,
+      }: {
+        plugin: { id: string; origin?: string };
+        snapshot: {
+          index?: { plugins?: Array<{ pluginId?: string; id?: string; enabled?: boolean }> };
+        };
+      }) =>
+        plugin.origin === "bundled" ||
+        Boolean(
+          snapshot.index?.plugins?.some(
+            (entry) => (entry.pluginId ?? entry.id) === plugin.id && entry.enabled !== false,
+          ),
+        ),
+      loadManifestMetadataSnapshot: (...args: unknown[]) =>
         currentPluginMetadataSnapshotMock(...args) ?? loadPluginMetadataSnapshotMock(...args),
     }));
 
@@ -301,6 +328,7 @@ describe("loadModelCatalog", () => {
     vi.doUnmock("../plugins/provider-runtime.runtime.js");
     vi.doUnmock("../plugins/current-plugin-metadata-snapshot.js");
     vi.doUnmock("../plugins/plugin-metadata-snapshot.js");
+    vi.doUnmock("../plugins/manifest-contract-eligibility.js");
   });
 
   it("retries after import failure without poisoning the cache", async () => {
@@ -695,6 +723,61 @@ describe("loadModelCatalog", () => {
     expect(augmentCatalogMock).not.toHaveBeenCalled();
   });
 
+  it("refreshes stale persisted read-only rows with manifest catalog metadata", async () => {
+    readFileMock.mockResolvedValueOnce(
+      JSON.stringify({
+        providers: {
+          xai: {
+            models: [
+              {
+                id: "grok-4.3",
+                name: "Grok 4.3",
+                reasoning: false,
+                contextWindow: 200_000,
+                input: ["text"],
+              },
+            ],
+          },
+        },
+      }),
+    );
+    currentPluginMetadataSnapshotMock.mockReturnValue({
+      ...emptyPluginMetadataSnapshot(),
+      plugins: [
+        {
+          id: "xai",
+          origin: "bundled",
+          providers: ["xai"],
+          modelCatalog: {
+            providers: {
+              xai: {
+                models: [
+                  {
+                    id: "grok-4.3",
+                    name: "Grok 4.3",
+                    reasoning: true,
+                    contextWindow: 1_000_000,
+                    input: ["text", "image"],
+                  },
+                ],
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    const result = await loadModelCatalog({ config: {} as OpenClawConfig, readOnly: true });
+
+    const entry = requireCatalogEntry(result, "xai", "grok-4.3");
+    expect(result.filter((entryValue) => entryValue.provider === "xai")).toHaveLength(1);
+    expect(entry.contextWindow).toBe(1_000_000);
+    expect(entry.input).toEqual(["text", "image"]);
+    expect(entry.reasoning).toBe(true);
+    expect(ensureOpenClawModelsJsonMock).not.toHaveBeenCalled();
+    expect(augmentCatalogMock).not.toHaveBeenCalled();
+  });
+
   it("normalizes persisted read-only catalog rows with manifest model id policies", async () => {
     currentPluginMetadataSnapshotMock.mockReturnValue(modelIdNormalizationSnapshot());
     readFileMock.mockResolvedValueOnce(
@@ -1051,9 +1134,11 @@ describe("loadModelCatalog", () => {
 
     const entry = requireCatalogEntry(result, "openai", "gpt-5.4");
     expect(entry.name).toBe("GPT-5.3 Codex");
-    expect(result.some((entry) => entry.provider === "openai" && entry.id === "gpt-5.4-mini")).toBe(
-      false,
-    );
+    expect(
+      result.some(
+        (entryResult) => entryResult.provider === "openai" && entryResult.id === "gpt-5.4-mini",
+      ),
+    ).toBe(false);
   });
 
   it("merges provider-owned supplemental catalog entries", async () => {
@@ -1188,6 +1273,93 @@ describe("loadModelCatalog", () => {
     ).toHaveLength(1);
   });
 
+  it("refreshes discovered rows with provider supplemental catalog metadata", async () => {
+    mockAgentDiscoveryModels([
+      {
+        provider: "github-copilot",
+        id: "claude-opus-4.8",
+        name: "Claude Opus 4.8",
+        reasoning: false,
+        input: ["text"],
+        contextWindow: 200_000,
+      },
+    ]);
+    augmentCatalogMock.mockResolvedValueOnce([
+      {
+        provider: "github-copilot",
+        id: "claude-opus-4.8",
+        name: "Claude Opus 4.8 Live",
+        reasoning: true,
+        input: ["text", "image"],
+        contextWindow: 1_000_000,
+      },
+    ]);
+
+    const result = await loadModelCatalog({ config: {} as OpenClawConfig });
+
+    const entry = requireCatalogEntry(result, "github-copilot", "claude-opus-4.8");
+    expect(result.filter((entryValue) => entryValue.provider === "github-copilot")).toHaveLength(1);
+    expect(entry.name).toBe("Claude Opus 4.8");
+    expect(entry.contextWindow).toBe(1_000_000);
+    expect(entry.input).toEqual(["text", "image"]);
+    expect(entry.reasoning).toBe(true);
+  });
+
+  it("passes configured provider rows to provider catalog augment hooks", async () => {
+    mockAgentDiscoveryModels([]);
+    augmentCatalogMock.mockResolvedValueOnce([
+      {
+        provider: "ollama",
+        id: "minimax-m3:cloud",
+        name: "Minimax M3 Live",
+        reasoning: true,
+        input: ["text", "image"],
+        contextWindow: 1_048_576,
+        compat: { supportsTools: true },
+      },
+    ]);
+
+    const result = await loadModelCatalog({
+      config: {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://127.0.0.1:11434",
+              api: "ollama",
+              models: [
+                {
+                  id: "minimax-m3:cloud",
+                  name: "Minimax M3 Configured",
+                  reasoning: false,
+                  input: ["text"],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  contextWindow: 128_000,
+                  maxTokens: 8192,
+                  compat: { supportsTools: false },
+                },
+              ],
+            },
+          },
+        },
+      } as OpenClawConfig,
+    });
+
+    const entry = requireCatalogEntry(result, "ollama", "minimax-m3:cloud");
+    expect(entry.name).toBe("Minimax M3 Live");
+    expect(entry.contextWindow).toBe(128_000);
+    expect(entry.input).toEqual(["text"]);
+    expect(entry.reasoning).toBe(false);
+    expect(entry.compat).toEqual({ supportsTools: false });
+    expect(augmentCatalogMock.mock.calls[0]?.[0]?.context.entries).toContainEqual(
+      expect.objectContaining({
+        provider: "ollama",
+        id: "minimax-m3:cloud",
+        name: "Minimax M3 Configured",
+        contextWindow: 128_000,
+      }),
+    );
+  });
+
   it("includes configured provider models missing from discovery", async () => {
     mockSingleOpenAiCatalogModel();
 
@@ -1253,7 +1425,7 @@ describe("loadModelCatalog", () => {
     });
 
     const entry = requireCatalogEntry(result, "vllm", "Qwen/Qwen3-8B");
-    expect(result.filter((entry) => entry.provider === "vllm")).toHaveLength(1);
+    expect(result.filter((entryValue) => entryValue.provider === "vllm")).toHaveLength(1);
     expect(entry.name).toBe("Qwen3 8B");
     expect(entry.reasoning).toBe(true);
     expect(entry.compat).toEqual(
@@ -1304,7 +1476,7 @@ describe("loadModelCatalog", () => {
     });
 
     const entry = requireCatalogEntry(result, "vllm", "Qwen/Qwen3-8B");
-    expect(result.filter((entry) => entry.provider === "vllm")).toHaveLength(1);
+    expect(result.filter((entryLocal) => entryLocal.provider === "vllm")).toHaveLength(1);
     expect(entry.name).toBe("Qwen3 8B");
     expect(entry.reasoning).toBe(true);
     expect(entry.compat).toEqual(
@@ -1350,6 +1522,52 @@ describe("loadModelCatalog", () => {
     expect(entry.name).toBe("Doubao Seed 1.8");
     expect(entry.input).toEqual(["text", "image"]);
     expect(entry.contextWindow).toBe(256_000);
+  });
+
+  it("refreshes discovered rows with manifest catalog metadata", async () => {
+    mockAgentDiscoveryModels([
+      {
+        provider: "xai",
+        id: "grok-4.3",
+        name: "Grok 4.3",
+        reasoning: false,
+        input: ["text"],
+        contextWindow: 200_000,
+      },
+    ]);
+    currentPluginMetadataSnapshotMock.mockReturnValue({
+      ...emptyPluginMetadataSnapshot(),
+      plugins: [
+        {
+          id: "xai",
+          origin: "bundled",
+          providers: ["xai"],
+          modelCatalog: {
+            providers: {
+              xai: {
+                models: [
+                  {
+                    id: "grok-4.3",
+                    name: "Grok 4.3",
+                    reasoning: true,
+                    input: ["text", "image"],
+                    contextWindow: 1_000_000,
+                  },
+                ],
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    const result = await loadModelCatalog({ config: {} as OpenClawConfig });
+
+    const entry = requireCatalogEntry(result, "xai", "grok-4.3");
+    expect(result.filter((entryValue) => entryValue.provider === "xai")).toHaveLength(1);
+    expect(entry.contextWindow).toBe(1_000_000);
+    expect(entry.input).toEqual(["text", "image"]);
+    expect(entry.reasoning).toBe(true);
   });
 
   it("keeps configured LM Studio models visible without runtime catalog augmentation", async () => {

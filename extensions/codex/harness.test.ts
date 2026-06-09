@@ -1,3 +1,4 @@
+// Codex tests cover harness plugin behavior.
 import { describe, expect, it } from "vitest";
 import { createCodexAppServerAgentHarness } from "./harness.js";
 
@@ -32,7 +33,7 @@ describe("Codex agent harness supports()", () => {
   });
 
   it("normalizes provider casing", () => {
-    expect(harness.supports({ provider: "OpenAI-Codex", requestedRuntime: "codex" })).toEqual({
+    expect(harness.supports({ provider: "OpenAI", requestedRuntime: "codex" })).toEqual({
       supported: true,
       priority: 100,
     });

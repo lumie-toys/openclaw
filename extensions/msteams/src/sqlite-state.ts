@@ -1,3 +1,4 @@
+// Msteams plugin module implements sqlite state behavior.
 import path from "node:path";
 import { getMSTeamsRuntime } from "./runtime.js";
 import { withFileLock } from "./store-fs.js";
@@ -41,7 +42,8 @@ export function resolveMSTeamsSqliteStateEnv(
 }
 
 export function toPluginJsonValue<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
+  const serialized = JSON.stringify(value);
+  return JSON.parse(serialized) as T;
 }
 
 export function resolveMSTeamsSqliteStateDir(

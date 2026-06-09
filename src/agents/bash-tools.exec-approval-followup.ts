@@ -1,13 +1,18 @@
+/**
+ * Delivery orchestration for async exec approval follow-ups.
+ * Resumes the originating agent session when possible and falls back to safe
+ * direct delivery only when session resume is unavailable.
+ */
+import {
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalString,
+} from "@openclaw/normalization-core/string-coerce";
 import {
   resolveExternalBestEffortDeliveryTarget,
   type ExternalBestEffortDeliveryTarget,
 } from "../infra/outbound/best-effort-delivery.js";
 import { sendMessage } from "../infra/outbound/message.js";
 import { isCronSessionKey, isSubagentSessionKey } from "../sessions/session-key-utils.js";
-import {
-  normalizeLowercaseStringOrEmpty,
-  normalizeOptionalString,
-} from "../shared/string-coerce.js";
 import { isGatewayMessageChannel, normalizeMessageChannel } from "../utils/message-channel.js";
 import { buildExecApprovalFollowupIdempotencyKey } from "./bash-tools.exec-approval-followup-state.js";
 import { sanitizeUserFacingText } from "./embedded-agent-helpers/sanitize-user-facing-text.js";
@@ -61,6 +66,7 @@ function formatUnknownError(error: unknown): string {
   }
 }
 
+/** Builds the prompt used to resume an agent after an approved async exec completes. */
 export function buildExecApprovalFollowupPrompt(resultText: string): string {
   const trimmed = resultText.trim();
   if (isExecDeniedResultText(trimmed)) {
@@ -270,6 +276,7 @@ async function sendDirectFollowupFallback(params: {
   return true;
 }
 
+/** Sends an exec approval follow-up via session resume or safe direct delivery. */
 export async function sendExecApprovalFollowup(
   params: ExecApprovalFollowupParams,
 ): Promise<boolean> {

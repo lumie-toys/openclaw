@@ -1,3 +1,4 @@
+// Codex plugin module implements conversation binding behavior.
 import {
   formatErrorMessage,
   resolveSandboxContext,
@@ -25,12 +26,12 @@ import {
   type CodexAppServerSandboxMode,
   type OpenClawExecPolicyForCodexAppServer,
 } from "./app-server/config.js";
-import {
-  type CodexServiceTier,
-  type CodexThreadResumeResponse,
-  type CodexThreadStartResponse,
-  type CodexTurnStartResponse,
-  type JsonValue,
+import type {
+  CodexServiceTier,
+  CodexThreadResumeResponse,
+  CodexThreadStartResponse,
+  CodexTurnStartResponse,
+  JsonValue,
 } from "./app-server/protocol.js";
 import {
   resolveCodexNativeExecutionBlock,

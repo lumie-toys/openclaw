@@ -1,10 +1,11 @@
-import type { Command } from "commander";
-import { getTerminalTableWidth, renderTable } from "../../../packages/terminal-core/src/table.js";
-import { defaultRuntime } from "../../runtime.js";
+// Node camera commands: list devices, capture photos, and capture short clips through node.invoke.
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
-} from "../../shared/string-coerce.js";
+} from "@openclaw/normalization-core/string-coerce";
+import type { Command } from "commander";
+import { getTerminalTableWidth, renderTable } from "../../../packages/terminal-core/src/table.js";
+import { defaultRuntime } from "../../runtime.js";
 import { shortenHomePath } from "../../utils.js";
 import {
   type CameraFacing,
@@ -42,6 +43,7 @@ function getGatewayInvokePayload(raw: unknown): unknown {
     : undefined;
 }
 
+/** Register node camera list/snap/clip commands. */
 export function registerNodesCameraCommands(nodes: Command) {
   const camera = nodes.command("camera").description("Capture camera media from a paired node");
 

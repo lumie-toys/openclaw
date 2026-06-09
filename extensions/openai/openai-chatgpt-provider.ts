@@ -1,3 +1,4 @@
+// Openai provider module implements model/runtime integration.
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import type {
   ProviderAuthContext,
@@ -113,7 +114,9 @@ function isOpenAIOrLegacyCodexProvider(provider: string | undefined): boolean {
 
 function isLegacyCodexCompatBaseUrl(baseUrl?: string): boolean {
   const trimmed = baseUrl?.trim();
-  return !!trimmed && /^https?:\/\/api\.githubcopilot\.com(?:\/v1)?\/?$/iu.test(trimmed);
+  return (
+    trimmed !== undefined && /^https?:\/\/api\.githubcopilot\.com(?:\/v1)?\/?$/iu.test(trimmed)
+  );
 }
 
 function normalizeCodexTransportFields(params: {

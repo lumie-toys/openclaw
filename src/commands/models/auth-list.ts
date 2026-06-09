@@ -1,3 +1,5 @@
+/** Command helpers for listing saved model auth profiles. */
+import { timestampMsToIsoString } from "@openclaw/normalization-core/number-coercion";
 import { resolveAgentDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import {
   ensureAuthProfileStore,
@@ -10,7 +12,6 @@ import {
 } from "../../agents/auth-profiles.js";
 import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js";
 import { type RuntimeEnv, writeRuntimeJson } from "../../runtime.js";
-import { timestampMsToIsoString } from "../../shared/number-coercion.js";
 import { shortenHomePath } from "../../utils.js";
 import { loadModelsConfig } from "./load-config.js";
 import { resolveKnownAgentId } from "./shared.js";
@@ -108,6 +109,7 @@ function formatProfileLine(profile: AuthProfileSummary): string {
   return `- ${profile.label} [${details.join("; ")}]`;
 }
 
+/** Lists auth profiles for the selected agent, optionally filtered by provider. */
 export async function modelsAuthListCommand(
   opts: { provider?: string; agent?: string; json?: boolean },
   runtime: RuntimeEnv,
@@ -151,7 +153,7 @@ export async function modelsAuthListCommand(
   }
 
   runtime.log(`Agent: ${agentId}`);
-  runtime.log(`Auth state file: ${shortenHomePath(resolveAuthStatePathForDisplay(agentDir))}`);
+  runtime.log(`Auth state store: ${shortenHomePath(resolveAuthStatePathForDisplay(agentDir))}`);
   if (providerFilter.provider) {
     runtime.log(`Provider: ${providerFilter.provider}`);
   }

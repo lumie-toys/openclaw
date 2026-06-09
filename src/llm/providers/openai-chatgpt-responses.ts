@@ -1,3 +1,4 @@
+// OpenAI ChatGPT Responses provider handles ChatGPT-authenticated response streams.
 import type * as NodeOs from "node:os";
 import type {
   Tool as OpenAITool,
@@ -20,7 +21,10 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
   });
 }
 
-import { resolveTimerTimeoutMs, clampTimerTimeoutMs } from "../../shared/number-coercion.js";
+import {
+  resolveTimerTimeoutMs,
+  clampTimerTimeoutMs,
+} from "@openclaw/normalization-core/number-coercion";
 import { getEnvApiKey } from "../env-api-keys.js";
 import { clampThinkingLevel } from "../model-utils.js";
 import { registerSessionResourceCleanup } from "../session-resources.js";
@@ -477,6 +481,7 @@ function buildRequestBody(
 ): RequestBody {
   const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
     includeSystemPrompt: false,
+    replayResponsesItemIds: false,
   });
 
   const body: RequestBody = {
@@ -921,7 +926,7 @@ async function getWebSocketConstructor(): Promise<WebSocketConstructor | null> {
 
     cachedWebsocket = class extends WebSocket {
       constructor(url: string | URL, options?: string | string[] | Record<string, unknown>) {
-        let opts: Record<string, unknown> = {};
+        let opts: Record<string, unknown>;
         if (Array.isArray(options) || typeof options === "string") {
           opts = { protocols: options };
         } else {
@@ -1319,7 +1324,7 @@ async function* parseWebSocket(
     }
 
     if (failed) {
-      throw failed;
+      throw toLintErrorObject(failed, "Non-Error thrown");
     }
     if (!sawCompletion) {
       throw new Error("WebSocket stream closed before response.completed");
@@ -1333,7 +1338,7 @@ async function* parseWebSocket(
 }
 
 function requestBodyWithoutInput(body: RequestBody): RequestBody {
-  const { input, previous_response_id: previousResponseId, ...rest } = body;
+  const { input: _input, previous_response_id: _previousResponseId, ...rest } = body;
   return rest;
 }
 
@@ -1489,6 +1494,7 @@ async function processWebSocketStream(
         CODEX_TOOL_CALL_PROVIDERS,
         {
           includeSystemPrompt: false,
+          replayResponsesItemIds: false,
         },
       ).filter((item) => item.type !== "function_call_output");
       entry.continuation = {
@@ -1631,4 +1637,18 @@ function buildWebSocketHeaders(
   headers.set("x-client-request-id", requestId);
   headers.set("session_id", requestId);
   return headers;
+}
+
+function toLintErrorObject(value: unknown, fallbackMessage: string): Error {
+  if (value instanceof Error) {
+    return value;
+  }
+  if (typeof value === "string") {
+    return new Error(value);
+  }
+  const error = new Error(fallbackMessage, { cause: value });
+  if ((typeof value === "object" && value !== null) || typeof value === "function") {
+    Object.assign(error, value);
+  }
+  return error;
 }

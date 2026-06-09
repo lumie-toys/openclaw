@@ -1,3 +1,8 @@
+// OpenAI stream wrapper normalizes OpenAI-compatible streamed tool and text events.
+import {
+  normalizeOptionalLowercaseString,
+  readStringValue,
+} from "@openclaw/normalization-core/string-coerce";
 import {
   patchCodexNativeWebSearchPayload,
   resolveCodexNativeSearchActivation,
@@ -22,10 +27,6 @@ import type { StreamFn } from "../../../agents/runtime/index.js";
 import type { ThinkLevel } from "../../../auto-reply/thinking.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { createSubsystemLogger } from "../../../logging/subsystem.js";
-import {
-  normalizeOptionalLowercaseString,
-  readStringValue,
-} from "../../../shared/string-coerce.js";
 import { streamSimple } from "../../stream.js";
 import type { SimpleStreamOptions } from "../../types.js";
 import { mapThinkingLevelToReasoningEffort } from "./reasoning-effort-utils.js";
@@ -36,6 +37,9 @@ const log = createSubsystemLogger("llm/providers/stream-wrappers");
 type OpenAIServiceTier = "auto" | "default" | "flex" | "priority";
 type OpenClawSimpleStreamOptions = SimpleStreamOptions & {
   openclawCodeModeToolSurface?: boolean;
+};
+type OpenAIResponsesReplayOptions = Parameters<StreamFn>[2] & {
+  replayResponsesItemIds?: boolean;
 };
 export { resolveOpenAITextVerbosity };
 
@@ -393,15 +397,21 @@ export function createOpenAIResponsesContextManagementWrapper(
     }
 
     const originalOnPayload = options?.onPayload;
-    return underlying(model, context, {
+    const replayResponsesItemIds =
+      policy.explicitStore === undefined
+        ? (options as OpenAIResponsesReplayOptions | undefined)?.replayResponsesItemIds
+        : policy.explicitStore;
+    const nextOptions: OpenAIResponsesReplayOptions = {
       ...options,
+      ...(replayResponsesItemIds === undefined ? {} : { replayResponsesItemIds }),
       onPayload: (payload) => {
         if (payload && typeof payload === "object") {
           applyOpenAIResponsesPayloadPolicy(payload as Record<string, unknown>, policy);
         }
         return originalOnPayload?.(payload, model);
       },
-    });
+    };
+    return underlying(model, context, nextOptions);
   };
 }
 

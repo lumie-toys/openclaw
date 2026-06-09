@@ -1,3 +1,4 @@
+/** Session-scoped MCP runtime manager, catalog loader, and transport lifecycle. */
 import crypto from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -11,6 +12,7 @@ import type {
   jsonSchemaValidator,
 } from "@modelcontextprotocol/sdk/validation/types.js";
 import { redactSensitiveUrlLikeString } from "@openclaw/net-policy/redact-sensitive-url";
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { Compile } from "typebox/compile";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { logWarn } from "../logger.js";
@@ -20,7 +22,6 @@ import {
   findJsonSchemaShapeError,
   normalizeJsonSchemaForTypeBox,
 } from "../shared/json-schema-defaults.js";
-import { normalizeOptionalString } from "../shared/string-coerce.js";
 import { sanitizeServerName } from "./agent-bundle-mcp-names.js";
 import type {
   McpCatalogTool,
@@ -58,6 +59,7 @@ const BUNDLE_MCP_FAILURE_THRESHOLD = 3;
 const BUNDLE_MCP_FAILURE_COOLDOWN_MS = 60_000;
 const BUNDLE_MCP_CATALOG_LIST_TIMEOUT_MS = 1_500;
 const BUNDLE_MCP_METADATA_TEXT_LIMIT = 1_200;
+let bundleMcpCatalogListTimeoutMs: number | undefined;
 
 type McpToolSelection = {
   include?: readonly string[];
@@ -200,9 +202,9 @@ function connectWithTimeout(
         clearTimeout(timer);
         resolve(value);
       },
-      (error) => {
+      (error: unknown) => {
         clearTimeout(timer);
-        reject(error);
+        reject(toLintErrorObject(error, "Non-Error rejection"));
       },
     );
   });
@@ -262,11 +264,20 @@ function hasConfiguredMcpRequestTimeout(rawServer: unknown): boolean {
 }
 
 function getCatalogListTimeoutMs(rawServer: unknown, requestTimeoutMs: number): number {
+  if (bundleMcpCatalogListTimeoutMs !== undefined) {
+    return bundleMcpCatalogListTimeoutMs;
+  }
   return hasConfiguredMcpRequestTimeout(rawServer)
     ? requestTimeoutMs
     : BUNDLE_MCP_CATALOG_LIST_TIMEOUT_MS;
 }
 
+function setBundleMcpCatalogListTimeoutMsForTest(timeoutMs?: number): void {
+  bundleMcpCatalogListTimeoutMs =
+    typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? Math.floor(timeoutMs)
+      : undefined;
+}
 async function listAllResources(client: Client, timeoutMs: number) {
   const resources: unknown[] = [];
   let cursor: string | undefined;
@@ -366,14 +377,41 @@ function summarizeServerCapabilities(capabilities: ServerCapabilities | undefine
       : undefined,
   };
 }
+// Safety net for hung MCP servers, not a tuning parameter.
+const DISPOSE_TIMEOUT_MS = 5_000;
 
 async function disposeSession(session: BundleMcpSession) {
   session.detachStderr?.();
-  if (session.transportType === "streamable-http") {
-    await (session.transport as StreamableHTTPClientTransport).terminateSession().catch(() => {});
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  await Promise.race([
+    (async () => {
+      if (session.transportType === "streamable-http") {
+        await (session.transport as StreamableHTTPClientTransport)
+          .terminateSession()
+          .catch(() => {});
+      }
+      await session.transport.close().catch(() => {});
+      await session.client.close().catch(() => {});
+    })(),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        resolve();
+      }, DISPOSE_TIMEOUT_MS);
+      timer.unref?.();
+    }),
+  ]).finally(() => {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  });
+  if (timedOut) {
+    // Force-close transport and client so a hung terminateSession() DELETE
+    // gets its AbortSignal triggered by the transport teardown.
+    await session.transport.close().catch(() => {});
+    await session.client.close().catch(() => {});
   }
-  await session.transport.close().catch(() => {});
-  await session.client.close().catch(() => {});
 }
 
 function createCatalogFingerprint(servers: Record<string, unknown>): string {
@@ -727,7 +765,7 @@ export function createSessionMcpRuntime(params: {
         }
         released = true;
         activeLeases = Math.max(0, activeLeases - 1);
-        lastUsedAt = Date.now();
+        // Release is not use: refreshing lastUsedAt here defeats the idle-sweep TTL.
       };
     },
     getCatalog,
@@ -1106,10 +1144,26 @@ export const testing = {
   createSessionMcpRuntimeManager,
   async resetSessionMcpRuntimeManager() {
     await disposeAllSessionMcpRuntimes();
+    setBundleMcpCatalogListTimeoutMsForTest();
   },
   getCachedSessionIds() {
     return getSessionMcpRuntimeManager().listSessionIds();
   },
+  setBundleMcpCatalogListTimeoutMsForTest,
   resolveSessionMcpRuntimeIdleTtlMs,
 };
 export { testing as __testing };
+
+function toLintErrorObject(value: unknown, fallbackMessage: string): Error {
+  if (value instanceof Error) {
+    return value;
+  }
+  if (typeof value === "string") {
+    return new Error(value);
+  }
+  const error = new Error(fallbackMessage, { cause: value });
+  if ((typeof value === "object" && value !== null) || typeof value === "function") {
+    Object.assign(error, value);
+  }
+  return error;
+}

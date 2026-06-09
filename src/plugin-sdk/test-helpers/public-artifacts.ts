@@ -1,8 +1,11 @@
+/**
+ * Shared public artifact basename helpers for bundled plugin contracts.
+ */
+import { uniqueStrings } from "../../../packages/normalization-core/src/string-normalization.js";
 import {
   assertUniqueValues,
   BUNDLED_RUNTIME_SIDECAR_PATHS,
 } from "../../plugins/runtime-sidecar-paths.js";
-import { uniqueStrings } from "../../shared/string-normalization.js";
 
 export function getPublicArtifactBasename(relativePath: string): string {
   return relativePath.split("/").at(-1) ?? relativePath;

@@ -1,3 +1,4 @@
+// Azure OpenAI Responses provider adapts Azure deployments to Responses API streams.
 import { AzureOpenAI } from "openai";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import { getEnvApiKey } from "../env-api-keys.js";
@@ -181,9 +182,10 @@ function resolveAzureConfig(
 
 function createClient(
   model: Model<"azure-openai-responses">,
-  apiKey: string,
+  apiKeyInput: string,
   options?: AzureOpenAIResponsesOptions,
 ) {
+  let apiKey = apiKeyInput;
   if (!apiKey) {
     if (!process.env.AZURE_OPENAI_API_KEY) {
       throw new Error(

@@ -1,3 +1,4 @@
+// Qa Lab tests cover gateway child plugin behavior.
 import { EventEmitter } from "node:events";
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -430,6 +431,17 @@ describe("buildQaRuntimeEnv", () => {
         offset: 0,
         pollMs: 1,
         timeoutMs: 1,
+      }),
+    ).rejects.toThrow("qa gateway child did not reach restart boundary");
+  });
+
+  it("keeps oversized restart-boundary poll intervals within the timeout", async () => {
+    await expect(
+      testing.waitForQaGatewayRestartBoundary({
+        logs: () => "signal SIGUSR1 received\n",
+        offset: 0,
+        pollMs: Number.MAX_SAFE_INTEGER,
+        timeoutMs: 5,
       }),
     ).rejects.toThrow("qa gateway child did not reach restart boundary");
   });
